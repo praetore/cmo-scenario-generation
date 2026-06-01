@@ -75,7 +75,7 @@ Een cruciale les is dat DBID's (Database IDs) **niet universeel** zijn en kunnen
   *(Opmerking: Dit toont welke Magazines (torpedo opslag) en Mounts (torpedobuizen) een unit heeft. Voor onderzeeërs is dit essentieel om te zien of ze de juiste torpedo's en decoys aan boord hebben).*
 - **Scenario Preflight Validatie (verplicht)**: Valideer vóór oplevering altijd alle air `dbid/loadoutid` koppels in het Lua-script tegen de DB-lock van het scenario (`<series>_<version>.db3` via `cmo_config.json` of lokale `DB/`):
   ```bash
-  python scripts/db_search.py --validate-scenario generated/warno_air_strike.lua --series DB3K --version 515
+  python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --series DB3K --version 515
   ```
   *(Doel: detecteer ontbrekende of incompatibele loadouts vroeg. **Geen vaste unit-lijst** — tijdgeest, strike **flight profile**, **TOT/wave-sync** (`strike_package_tot` = air + TLAM), **CSG group lead patrol** (`assign_csg_group_missions`), **carrier strike flight-size**, **SEAD launch** (`@sead_package`), **naval TLAM timing** (`@naval_package`, aparte Strike-missie), waarschuwing CAP/AEW/ISR zonder starttime, plus mission-fit, SEAD, CSG, **patrol-zone proximity**, **nuclear policy**, F-35, AAR, escort slot. Zie `logic_checks_cmo.md` §1 en §4. Exit: `0` / `1` / `2`.)*
 - **Handmatige SQL Queries**: Je kunt ook direct queries uitvoeren op de master database:

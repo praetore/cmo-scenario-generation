@@ -1,75 +1,200 @@
 # CMO scenario generation
 
-Lua scenarios and Python tooling for **Command: Modern Operations** preflight validation and database lookup.
+**Lua scenarios and Python tooling for [Command: Modern Operations](https://www.matrixgames.com/game/command-modern-operations) (CMO)** — built to support AI-assisted authoring, with automated “preflight” checks before you load a script in the game.
 
-Python modules live under `scripts/`. Run commands from the **repository root**:
+> **New to CMO?** This README is written for a lightning-talk audience: you do not need to own the game to understand what the repository does. To *run* scenarios you (or a demo machine) need a CMO install and the official databases.
 
-```bash
-python scripts/db_search.py …
-python scripts/merge_db.py …
+---
+
+## What is Command: Modern Operations?
+
+CMO is a **real-time naval / air / land wargame** used by hobbyists and professionals for what-if conflict analysis. Think of it as an interactive map where:
+
+- **Units** are real-world platforms (ships, aircraft, SAM sites, submarines) with sensors, weapons, and fuel modeled in detail.
+- **Scenarios** place those units on a map with sides (e.g. Blue vs Red), missions (patrol, strike, SEAD), and victory conditions.
+- **The database** (`DB3K`, `CWDB`, …) is a large SQLite dataset of equipment IDs, loadouts, and capabilities — versioned (e.g. **DB3K 515** = modern era).
+
+CMO can build scenarios by hand in the editor, but it also exposes a **Lua scripting API** (`ScenEdit_*` functions). Running a `.lua` file can create sides, spawn units, assign missions, and set doctrine in seconds — which is what this repository automates and validates.
+
+---
+
+## What is this repository?
+
+| Piece | Purpose |
+|--------|---------|
+| **`scripts/`** | Python tools: search the equipment DB, validate Lua before play |
+| **`.cursor/rules/`** | Authoring guides for AI assistants (API reference, doctrine checks) |
+| **`cmo_config.example.json`** | Template for pointing tools at your game’s `DB` folder (not committed) |
+| **`generated/`** | **Local** folder for scenario `.lua` you produce (gitignored) |
+
+**Problem we solve:** Scenario Lua is easy to get wrong — wrong aircraft/loadout pairs, ships on land, strike timing that cannot be flown, carrier groups without escorts, nuclear weapons on by accident. A single typo in a database ID fails silently in-game or hours into a test. **Preflight** runs dozens of static checks against the same database CMO uses.
+
+**Typical workflow:**
+
+1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
+2. Save Lua under `generated/` on your machine (not in this git repo).
+3. Run **`scripts/db_search.py --validate-scenario …`** (must pass or warn).
+4. Copy the `.lua` into CMO’s `Lua` folder and execute from the scenario editor.
+
+```mermaid
+flowchart LR
+  A[Idea / OOB] --> B[Lua locally in generated/]
+  B --> C[Python preflight]
+  C -->|errors| B
+  C -->|ok| D[CMO: Run Lua script]
+  D --> E[Playtest on map]
 ```
 
-## Databases (required for `scripts/db_search.py`)
+---
 
-CMO `.db3` files are large and **not stored in git**. Choose one setup:
+## Repository layout
 
-### Recommended: config file (points at your game install)
+```text
+cmo-scenario-generation/
+├── README.md
+├── LICENSE
+├── cmo_config.example.json   ← copy to cmo_config.json
+├── generated/                ← local scenario Lua (gitignored)
+├── scripts/                  ← Python (run from repo root)
+│   ├── db_search.py
+│   ├── merge_db.py
+│   └── scenario_*.py
+├── DB/                       ← optional local .db3 copy (gitignored)
+└── .cursor/rules/
+```
 
-1. Copy the template:
+**In git:** tooling, rules, docs, config template.  
+**Not in git:** scenario `.lua`, CMO databases, `CMO_Master.db`, `cmo_config.json`, and anything under `generated/`.
+
+---
+
+## For lightning-talk attendees (no CMO install)
+
+You can still explore the repo:
+
+1. **Inspect preflight logic** — search `def _validate_` in `scripts/scenario_checks.py` (carrier groups, strike timing, loadout fit, nuclear policy, etc.).
+2. **Read authoring rules** — `.cursor/rules/logic_checks_cmo.md` (escorts, SEAD before strike, era-appropriate units).
+3. **Skim the API reference** — `.cursor/rules/cmo_api_reference.md` for `ScenEdit_*` patterns.
+
+You will **not** be able to run validation or the game without [Database setup](#database-setup).
+
+---
+
+## Database setup
+
+Preflight and search need the same **SQLite `.db3` files** shipped with CMO. They are hundreds of MB each and are **not stored in this repository**.
+
+### Recommended: config file (point at your game install)
+
+1. Install **Command: Modern Operations** (Steam or standalone).
+2. Copy the template:
 
    ```bash
    copy cmo_config.example.json cmo_config.json
    ```
 
-2. Edit `cmo_config.json` and set **one** of:
+3. Edit `cmo_config.json` — set **one** of:
 
    | Field | Meaning |
    |-------|---------|
-   | `db_dir` | Folder that already contains `DB3K_515.db3`, `CWDB_515.db3`, etc. (usually `…/Command Modern Operations/DB`) |
-   | `cmo_install_dir` | Game root; tools append `/DB` automatically |
+   | `db_dir` | Folder containing `DB3K_515.db3`, etc. (usually `…/Command Modern Operations/DB`) |
+   | `cmo_install_dir` | Game root directory; tools append `\DB` automatically |
 
-   Typical Steam path (adjust for your install):
+   Example (Windows Steam — adjust to your path):
 
-   ```text
-   C:\Program Files (x86)\Steam\steamapps\common\Command Modern Operations\DB
+   ```json
+   {
+     "db_dir": "C:/Program Files (x86)/Steam/steamapps/common/Command Modern Operations/DB"
+   }
    ```
 
-3. `cmo_config.json` is gitignored — each machine keeps its own path.
+4. `cmo_config.json` stays on your machine only (gitignored).
 
-Environment overrides (optional): `CMO_DB_DIR` or `CMO_INSTALL_DIR`.
+Optional environment variables: `CMO_DB_DIR` or `CMO_INSTALL_DIR`.
 
-### Alternative: copy into the repo
+### Alternative: copy databases into the repo
 
-Copy the game’s `DB` folder (or only the `.db3` files you need) into this repository’s `DB/` directory. That folder is gitignored; use it when you cannot reference the install path (e.g. portable copy, CI artifact).
+Copy the `.db3` files you need into `DB/` (e.g. `DB/DB3K_515.db3`). The folder is gitignored. Use this for offline demos or CI artifacts.
 
-```text
-DB/DB3K_515.db3
-```
+### Verify setup
 
-If neither config nor local `DB/` has databases, preflight and search commands will fail with setup instructions.
-
-## Optional: `CMO_Master.db`
-
-Merged search DB built from all source `.db3` files in your configured DB directory:
-
-```bash
-python scripts/merge_db.py
-```
-
-`CMO_Master.db` is gitignored. Scenario preflight normally uses a single version-locked file (`DB3K_515.db3`, etc.) via `--series` / `--version`, not the master file.
-
-## Scenario scripts
-
-Generated Lua lives in `generated/`. Copy a script into your Command install’s `Lua` folder to run it in-game.
-
-Preflight (from repo root):
-
-```bash
-python scripts/db_search.py --validate-scenario generated/cuba_pressure_2026.lua --series DB3K --version 515
-```
-
-## Check your setup
+From the repository root:
 
 ```bash
 python -c "import sys; sys.path.insert(0, 'scripts'); from cmo_db import format_database_layout_message; print(format_database_layout_message())"
 ```
+
+You should see a path to your DB folder and a count of `.db3` files.
+
+---
+
+## Python tooling
+
+Requires **Python 3.10+** (stdlib + sqlite3). Run all commands from the **repository root**.
+
+Create `generated/` locally if it does not exist, then place your scenario `.lua` there.
+
+### Search equipment and loadouts
+
+```bash
+python scripts/db_search.py "F/A-18E" --series DB3K --version 515
+python scripts/db_search.py --loadouts 342 --series DB3K --version 515
+python scripts/db_search.py --weapons 429 --type DataShip --series DB3K --version 515
+```
+
+### Validate a scenario (preflight)
+
+Use the **same database series and version** your Lua script declares (see `db_series` / header comments in your file).
+
+```bash
+python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --series DB3K --version 515
+```
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | No errors (warnings allowed) |
+| `1` | Warnings only |
+| `2` | Errors — fix before loading in CMO |
+
+Checks include: aircraft/loadout compatibility, mission/loadout fit, carrier strike group composition, strike **time-on-target** vs range, SEAD timing, escort coverage for bombers, nuclear policy, operator country vs side, patrol zones near the CSG, and more.
+
+### Optional: merged master database
+
+```bash
+python scripts/merge_db.py
+python scripts/db_search.py --master "F-35" --series DB3K
+```
+
+Produces `CMO_Master.db` in the repo root (gitignored).
+
+---
+
+## Running a scenario in CMO (step-by-step)
+
+1. **Install CMO** and configure database paths (see above).
+2. **Write or generate** a `.lua` scenario under `generated/` locally.
+3. **Validate** with `scripts/db_search.py --validate-scenario` (above).
+4. **Copy** the script into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
+5. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.
+6. Watch the in-game message log for `print()` output and errors.
+7. **Save** as `.scen` if you want to reuse without re-running the script.
+
+---
+
+## Contributing / AI-assisted authoring
+
+- Write new scenarios to **`generated/<name>.lua`** locally (folder is gitignored).
+- Follow **`.cursor/rules/skills_cmo.md`** and **`.cursor/rules/logic_checks_cmo.md`**.
+- API reference: **`.cursor/rules/cmo_api_reference.md`**.
+
+Run preflight before sharing scripts with others (zip, gist, or your own fork).
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 praetore.
+
+Scenario content you create locally is your own; keep fictional / educational framing in OOB comments when sharing demos.

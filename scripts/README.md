@@ -3,7 +3,7 @@
 Run from the repository root, e.g.:
 
 ```bash
-python scripts/db_search.py --validate-scenario generated/cuba_pressure_2026.lua --series DB3K --version 515
+python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --series DB3K --version 515
 python scripts/merge_db.py
 ```
 

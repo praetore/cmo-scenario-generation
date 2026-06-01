@@ -7,10 +7,9 @@ cmo_config.json
 DB/
 !DB/README.md
 
-# Generated scenarios — Lua scripts are tracked; ignore local scratch
-generated/**/*.tmp
-generated/**/*.bak
-generated/.cache/
+# Scenario Lua output (local only — not published in this repository)
+generated/*
+!generated/.gitkeep
 
 # Python
 __pycache__/
