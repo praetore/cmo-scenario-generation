@@ -1,0 +1,33 @@
+# CMO databases and local config
+CMO_Master.db
+cmo_master.db
+cmo_config.json
+
+# Source .db3 and description trees (use cmo_config.json or copy here locally)
+DB/
+!DB/README.md
+
+# Generated scenarios — Lua scripts are tracked; ignore local scratch
+generated/**/*.tmp
+generated/**/*.bak
+generated/.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/workspace.xml
