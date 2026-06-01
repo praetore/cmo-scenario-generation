@@ -1,202 +1,202 @@
-# CMO Scenario Logica & Validatie Checks
+# CMO Scenario Logic & Validation Checks
 
-Dit document bevat de conceptuele spelregels en logica uit de CMO manual. Gebruik deze checks om te verifiëren of een gegenereerd scenario functioneel en realistisch is.
+This document contains conceptual gameplay rules and logic from the CMO manual. Use these checks to verify whether a generated scenario is functionally sound and realistic.
 
-## 1. Logistiek & Brandstof (Fuel Management)
-- **Bingo Fuel**: Eenheden keren om naar de basis als ze net genoeg brandstof hebben om veilig te landen.
-  - *Check*: Is de afstand tot het doelwit binnen de actieradius van de eenheid? Zo niet, voeg tankers (`AAR`) toe aan de missie.
-- **Air-to-Air Refueling (AAR)**: Tankers moeten op de juiste plek en hoogte vliegen.
-  - *Check*: Hebben de aanvalsvliegtuigen een 'Refuel' doctrine die tankers toestaat?
-  - *Check (Bomber strike — alleen indien nodig)*: **CALCM/JASSM-standoff** vanaf redelijk nabije landbasis (bijv. Florida → Cuba) → **geen** tanker verplicht. **Penetratie/LDGP** of extreem bereik → KC-missie **of** gerichte `use_refuel_unrep`. Zet **niet** `Yes_Yes` op een strike met **20+ carrier-fighters**: CMO stuurt iedereen naar 1–2 tankers (queue, mid-air crashes); beter `No_No` + `Bingo` RTB.
-- **Magazines & Stores**: Eenheden zonder munitie in hun magazines kunnen niet herbewapenen.
-  - *Check (Aircraft)*: Heeft de basis/carrier de juiste `Loadouts` in de voorraad (Magazines) voor de eenheden die er gestationeerd zijn? Gebruik `scripts/db_search.py --loadouts [ID] --type DataAircraft` om compatible loadouts te vinden. **Cruciaal**: Verifieer altijd dat de `LoadoutID` in de geautoriseerde lijst staat voor het specifieke `AircraftID`.
-  - *Check (Loadout Compatibility)*: Zorg dat de gekozen `LoadoutID` daadwerkelijk gekoppeld is aan het toestel in de database (tabel `DataAircraftLoadouts`). Een loadout van een ander land of een andere versie van hetzelfde toestel werkt mogelijk niet.
-  - *Check (Non-Air Vehicles)*: Voor `DataShip`, `DataSubmarine`, `DataFacility` en `DataGroundUnit` controleer je de effectieve "loadout" via mounts + magazines met `scripts/db_search.py --loadouts [ID] --type [Type]`.
-  - *Check (Legacy alternatief)*: `scripts/db_search.py --weapons [ID] --type [Type]` geeft dezelfde interne bewapeningscontrole.
-  - *Check (Scenario Preflight - verplicht)*: Draai altijd `python scripts/db_search.py --validate-scenario generated/<scenario.lua> --series <DB3K|CWDB> --version <versie>` voordat je een script oplevert (scenario’s staan in `generated/`). Controleert ook **wrapper-colon-syntax** (`mission:updateWPtimes()`, niet `mission.updateWPtimes()`). Met series+version valideert dit tegen de bijbehorende bron-`.db3` (pad via `cmo_config.json` → game `DB/`, of lokale repo-`DB/`); gebruik `CMO_Master.db` alleen voor verkenning of met `--master`.
-  - *Check (Mission/Loadout Fit - verplicht)*: Een loadout die technisch op een toestel past, hoeft niet bij de missierol te passen. Controleer per missie of de loadoutrol overeenkomt met het missietype:
-    - `AAW/CAP/Escort` -> A/A-loadout (of SEAD-capable escort zoals Wild Weasel).
-    - `SEAD` -> **Patrol**-missie met `type='SEAD'` (geen Strike); ARM/SEAD-loadout op die missie; geen anti-ship-only of strike-only loadouts. Strike-targetlijst dekt **niet** SEAD-vuur — alleen emitters in de patrol-zone.
-    - `Strike` -> strike-loadout (bommen/AG); geen A/A-only loadouts.
-    - `Support/AEW` -> AEW/early-warning loadout.
-    - Gebruik dezelfde `--validate-scenario` run: die rapporteert nu ook mission/loadout mismatches naast DB-compatibiliteit.
-  - *Check (Strike package escort — verplicht)*: **Niet-stealth bommenwerpers** op een **Strike**-missie en elke **SEAD**-missie moeten ondersteund worden door **jager-escort** (CAP/AAW met A/A-loadout op dezelfde zijde). SEAD-vluchten hebben óók eigen escort nodig (niet alleen de strike-golf).
-    - **Stealth-bommenwerpers** (o.a. B-2, F-117, B-21 in de DB-naam) vallen buiten deze harde eis; documenteer desgewenst alsnog begeleiding als scenario-doctrine dat vereist.
-    - **Standoff-bommenwerpers**: Alleen **CALCM/ALCM/JASSM**-achtige loadouts op Strike (geen penetratie met LDGP) → **geen** verplichte jager-escort in preflight, maar **wel** AAR/bereik controleren; waarschuwing in `--validate-scenario`.
-    - **Heuristiek in `scripts/db_search.py`**: classificatie op `DataAircraft.Name` (o.a. B-52, B-1, Tu-95, Tu-22, Su-24, F-111, …); stealth-markers sluiten uit. Ontbreekt escort, dan faalt `--validate-scenario`. Gebruik expliciete Lua-side als eerste argument van `add_air_unit_checked` / `spawn_air_wing`, anders kan de check niet per zijde worden afgedwongen.
-  - *Check (Strike flight profile vs munitie — verplicht)*: **Standoff**-loadouts (CALCM, JSOW, JASSM, …) horen niet bij **penetration**-vluchtpaden (ingress over het doel als bij dumb bombs). Zet `-- @strike_package mission=<StrikeName> profile=standoff|penetration time=HH:MM:SS date=YYYY/MM/DD max_spread=N` en `-- @strike_wave id=... role=naval_strike|air_strike|air_standoff offset=<minuten t.o.v. TOT>` in het Lua-script; roep `ScenEdit_CreateMissionFlightPlan` aan met dezelfde `TIMEONTARGET` voor alle lucht-strikers. Doctrine: `ShotgunOneEngagementBVR` / `ShotgunBVR` bij standoff, niet `Shotgun50_ToO` (penetratie-gedrag). Preflight vergelijkt loadout-klassen, annotaties, flight-plan-aanroepen en wave-spread.
-  - *Check (Strike TOT-synchronisatie — verplicht)*: TLAM (schepen op Strike), carrier-ordnance en B-52 CALCM moeten hetzelfde **impact-venster** hebben (`offset`-spread ≤ `max_spread`, typisch 0–15 min). Tomahawks die veel vóór JDAM/JSOW inslaan → offsets of events aanpassen. Geen meerdere `TIMEONTARGET`-waarden op één strike-missie.
-  - *Check (Naval TLAM timing — verplicht)*: **Schepen op dezelfde Strike als `CreateMissionFlightPlan` lanceren Tomahawks bij scenario-start** — zet de CG/DDG op een **aparte** Strike-missie met `starttime` + `TimeOnTargetStation` (~20–35 min vóór TOT), niet op de lucht-strike-missie. Documenteer `-- @naval_package mission=<NavalStrikeName> launch=HH:MM:SS minutes_before_strike_tot=N`. Preflight faalt bij gedeelde missie of ontbrekende schedule.
-  - *Check (Overige assets — waarschuwing)*: CAP/AEW/ISR-patrols zonder `starttime` terwijl de lucht-strike een flight plan heeft → waarschuwing (kunnen vroeg opstijgen); SEAD en naval hebben eigen harde checks.
-  - *Check (Geen nucleaire wapens — tenzij `@scenario_policy nuclear=true`)*: Conventionele scenario's gebruiken **geen** nucleaire loadouts (ALCM/TLAM-N/ACM) en zetten `use_nuclear_weapons='No'` in `ScenEdit_SetDoctrine` per zijde. Na `place_ship` op CSG/escorts: `strip_nuclear_from_unit()` (mounts/magazines). Preflight: loadoutnaam + verplichte wapens in `DataLoadoutWeapons` (Optional=0); waarschuwing bij nucleaire DB-defaults op schepen.
-  - *Check (Mission assignment — verplicht)*: Elke `place_ship` / `place_sub` / `place_sam` moet `ScenEdit_AssignUnitToMission` krijgen (direct of `for _, u in pairs(tabel)`). **Vliegtuigen**: `spawn_air_wing` → bestaande missie; zet `mission=` op `ScenEdit_AddUnit` (niet voor strike-escort) én `assign_air_to_mission` (guid/naam × missienaam/guid, `SetUnit`-fallback). Na `CreateMissionFlightPlan` kan CMO *Unassigned* tonen — **pre-flight-plan refresh**, **post-refresh**, `sync_strike_package_tot()` (geen tweede `createFlightPlans`; die wist toewijzingen). Mission-TOT via `mission_schedule_datetime()` → `YYYY.MM.DD` (match `ScenEdit_SetTime`). Strike-escort: `AssignUnitToMission(..., true)`. Preflight: **`Mission assignment`** + **`Aircraft mission assignment`**. Landbases → waarschuwing indien zonder missie.
-  - *Check (Carrier strike flight-size — verplicht bij grote CSG-strike)*: Bij **≥6 carrier-strikers** of **≥6 carrier-escorts** op één Strike-missie moet CMO **niet** alles als singles lanceren. Zet via `ScenEdit_SetMission`:
-    - `StrikeUseFlightSize = true`, `StrikeFlightSize = 4` (of 2/6/8), optioneel `StrikeMinAircraftReq` (bijv. 8) zodat de eerste golf wacht op voldoende toestellen;
-    - `EscortUseFlightSize = true`, `EscortFlightSizeShooter = 4`, optioneel `EscortMinShooter`.
-    - Documenteer in `-- @strike_package ... flight_size=4 use_flight_size=true min_aircraft=8 escort_flight_size=4 escort_use_flight_size=true`.
-    - **Niet** `UseFlightSize=false` / `useflightsize=false` op die missie — dat forceert stuk-voor-stuk launch. Preflight (`scripts/db_search.py --validate-scenario`) telt `spawn_air_wing` op `carrier.guid` en faalt bij ontbrekende instellingen.
-  - *Check (Tijdgeest / era-appropriate OOB — verplicht)*: Zet in elk scenario `local scenario_year = YYYY` (en `db_series`). Preflight vergelijkt **geen vaste DBID-lijst**, maar:
-    - **Platform**: `YearCommissioned` / `YearDecommissioned` uit de DB vs `scenario_year` (toestel/scheep nog niet in dienst → **fout**; DB markeert uit dienst vóór scenariojaar → **waarschuwing**).
-    - **Strike-munitie** (jaar ≥ 2000): loadout-**naam**-heuristiek — geen strike die **alleen** unguided is (`LDGP`, `Mk84 LDGP`, …); precisie/standoff (`JDAM`, `JSOW`, `GBU-`, `CALCM`, `JASSM`, …) is OK. **Fout** vanaf jaar ≥ 2010; **waarschuwing** 2000–2009.
-    - **Rol-fit** (geen verplicht type): F-35A/B/C en carrier-type via **naam** in de DB; bommenwerper-escort via **naam**-patronen — niet “gebruik toestel X”.
-    - **Bewuste uitzondering** (bijv. verouderde verdediger): documenteer in scenario-header; validator kan opzet niet raden.
-  - *Check (Strike escort slot — verplicht)*: Jager-escort voor een **Strike**-missie hoort in de **escort-laag van die Strike-missie**, niet op een losse patrol met "Escort" in de naam. Gebruik `ScenEdit_AssignUnitToMission(unit, '<StrikeMission>', true)` — 3e parameter `escort=True` (zie `cmo_api_reference.md`). Strikers op dezelfde Strike-missie: 2 parameters of `false`. `--validate-scenario` faalt bij patrol-missies zoals `Strike Escort CAP` voor strike-escorts, of bij Strike zonder minstens één `escort=true`-toewijzing.
-  - *Check (SEAD missie — verplicht)*: In CMO is **SEAD altijd `ScenEdit_AddMission(..., 'Patrol', {type='SEAD', zone={...}})`**, nooit `Strike`. SEAD-patrouilles vuren op **radar/emitter-contacts binnen de zone**; SAMs op de strike-targetlijst worden daar niet automatisch mee onderdrukt.
-    - **Zones**: Elke `place_sam` / IADS-locatie moet binnen de bounding box van minstens één SEAD-patrolzone vallen (meerdere zones bij gespreide SAM-gordels: west/oost).
-    - **Shooters**: Alleen toestellen met **ARM/SEAD-loadout** op de Patrol/SEAD-missie; **niet** A/A-only escort op dezelfde SEAD-missie (`SEAD Escort CAP` = aparte AAW-patrol).
-    - **Aantallen**: Minimaal `ceil(aantal_SAM_sites / 2)` SEAD-shooters per aanvallende zijde; **waarschuwing** als shooters `<` aantal SAM-sites.
-    - **Escort**: SEAD-sorties hebben nog steeds **AAW/CAP-escort** op een andere missie (zie strike-package check); Growlers op SEAD tellen niet als escort.
-    - **WCS land**: Bij side-wide `WCS TIGHT` op land: zet op SEAD-missies vaak `weapon_control_status_land=0` (FREE) via `ScenEdit_SetDoctrine({side=..., mission=...})`, anders vuren HARMs tegen passieve SAMs vaak niet.
-    - **Timing t.o.v. strike (verplicht bij grote carrier-SEAD)**: Laat **Wild Weasel SEAD** en **`SEAD Escort CAP`** niet bij scenario-start opstijgen als de strike-golf nog op het dek staat — Growlers/escort-Hornets gaan anders MiGs engageren vóór strike-escorts/strikers in de lucht zijn. Zet `ScenEdit_SetMission` met `starttime` + `TakeOffTime` (bijv. ~15–20 min vóór `@strike_package` TOT, ná verwachte strike-takeoff), optioneel `UseFlightSize`/`FlightSize` op de SEAD-patrols. Documenteer met `-- @sead_package missions=...,SEAD Escort CAP date=YYYY/MM/DD takeoff=HH:MM:SS minutes_before_strike_tot=N`. Zet scenario-start (`ScenEdit_SetTime`) vóór die takeoff. **Let op**: 18 min vóór TOT is vaak **niet genoeg transit** naar de SEAD-box (~270 nm van CSG) — preflight waarschuwt; bedoeling is SEAD *start* kort vóór strike, niet volledige suppressie bij TOT.
-    - **Preflight**: `scripts/db_search.py --validate-scenario` controleert ook: `ScenEdit_SetTime` vóór SEAD-takeoff; `@sead_package minutes_before_strike_tot` vs berekende delta; SEAD niet te vroeg vóór TOT (vóór strike-escort-launch); `@strike_package date` vs `DATEONTARGET`.
-  - *Check (Sustainability)*: Is er genoeg voorraad voor herhaalde sorties of langdurige gevechten?
-- **Magazine Capaciteit**:
-  - *Check*: Is het magazine niet te vol? (CMO simuleert ruimtegebruik in magazines).
-  - *Check*: Zijn de magazines toegewezen aan de juiste wapensystemen (Mounts)?
+## 1. Logistics & Fuel (Fuel Management)
+- **Bingo Fuel**: Units turn back to base when they have just enough fuel to land safely.
+  - *Check*: Is the distance to the target within the unit's range? If not, add tankers (`AAR`) to the mission.
+- **Air-to-Air Refueling (AAR)**: Tankers must fly at the correct position and altitude.
+  - *Check*: Do strike aircraft have a refuel doctrine that allows tankers?
+  - *Check (Bomber strike — only when needed)*: **CALCM/JASSM standoff** from a reasonably nearby land base (e.g. continental US → regional target) → tanker **not** mandatory. **Penetration/LDGP** or extreme range → KC mission **or** targeted `use_refuel_unrep`. Do **not** set `Yes_Yes` on a strike with **20+ carrier fighters**: CMO sends everyone to 1–2 tankers (queue, mid-air collisions); prefer `No_No` + `Bingo` RTB.
+- **Magazines & Stores**: Units without ammunition in their magazines cannot rearm.
+  - *Check (Aircraft)*: Does the base/carrier have the correct `Loadouts` in stock (magazines) for stationed aircraft? Use `scripts/db_search.py --loadouts [ID] --type DataAircraft` to find compatible loadouts. **Critical**: Always verify that the `LoadoutID` appears on the authorized list for the specific `AircraftID`.
+  - *Check (Loadout Compatibility)*: Ensure the chosen `LoadoutID` is actually linked to the aircraft in the database (`DataAircraftLoadouts` table). A loadout from another country or another variant of the same airframe may not work.
+  - *Check (Non-Air Vehicles)*: For `DataShip`, `DataSubmarine`, `DataFacility`, and `DataGroundUnit`, verify effective "loadout" via mounts + magazines with `scripts/db_search.py --loadouts [ID] --type [Type]`.
+  - *Check (Legacy alternative)*: `scripts/db_search.py --weapons [ID] --type [Type]` performs the same internal armament check.
+  - *Check (Scenario preflight — mandatory)*: Always run `python scripts/db_search.py --validate-scenario generated/<scenario>.lua --series <DB3K|CWDB> --version <version>` before delivering a script (scenarios live in `generated/`). Also checks **wrapper colon syntax** (`mission:updateWPtimes()`, not `mission.updateWPtimes()`). With series+version, validation runs against the matching source `.db3` (path via `cmo_config.json` → game `DB/`, or local repo `DB/`); use `CMO_Master.db` only for exploration or with `--master`.
+  - *Check (Mission/Loadout fit — mandatory)*: A loadout that technically fits an airframe may still be wrong for the mission role. Per mission, verify the loadout role matches the mission type:
+    - `AAW/CAP/Escort` → A/A loadout (or SEAD-capable escort such as Wild Weasel).
+    - `SEAD` → **Patrol** mission with `type='SEAD'` (not Strike); ARM/SEAD loadout on that mission; no anti-ship-only or strike-only loadouts. The strike target list does **not** cover SEAD fires — only emitters in the patrol zone.
+    - `Strike` → strike loadout (bombs/AG); no A/A-only loadouts.
+    - `Support/AEW` → AEW/early-warning loadout.
+    - The same `--validate-scenario` run now reports mission/loadout mismatches alongside DB compatibility.
+  - *Check (Strike package escort — mandatory)*: **Non-stealth bombers** on a **Strike** mission and every **SEAD** mission must be supported by **fighter escort** (CAP/AAW with A/A loadout on the same side). SEAD flights also need their own escort (not only the strike wave).
+    - **Stealth bombers** (e.g. B-2, F-117, B-21 in the DB name) are outside this hard requirement; document escort anyway if scenario doctrine requires it.
+    - **Standoff bombers**: Only **CALCM/ALCM/JASSM**-type loadouts on Strike (no penetration with LDGP) → **no** mandatory fighter escort in preflight, but **do** check AAR/range; `--validate-scenario` warns.
+    - **Heuristic in `scripts/db_search.py`**: classification on `DataAircraft.Name` (e.g. B-52, B-1, Tu-95, Tu-22, Su-24, F-111, …); stealth markers excluded. Missing escort fails `--validate-scenario`. Pass explicit Lua-side as the first argument of `add_air_unit_checked` / `spawn_air_wing`, otherwise the check cannot be enforced per side.
+  - *Check (Strike flight profile vs munitions — mandatory)*: **Standoff** loadouts (CALCM, JSOW, JASSM, …) do not belong on **penetration** flight paths (ingress over the target like dumb bombs). Set `-- @strike_package mission=<StrikeName> profile=standoff|penetration time=HH:MM:SS date=YYYY/MM/DD max_spread=N` and `-- @strike_wave id=... role=naval_strike|air_strike|air_standoff offset=<minutes vs TOT>` in the Lua script; call `ScenEdit_CreateMissionFlightPlan` with the same `TIMEONTARGET` for all air strikers. Doctrine: `ShotgunOneEngagementBVR` / `ShotgunBVR` for standoff, not `Shotgun50_ToO` (penetration behavior). Preflight compares loadout classes, annotations, flight-plan calls, and wave spread.
+  - *Check (Strike TOT synchronization — mandatory)*: TLAM (ships on Strike), carrier ordnance, and B-52 CALCM must share the same **impact window** (`offset` spread ≤ `max_spread`, typically 0–15 min). Tomahawks impacting long before JDAM/JSOW → adjust offsets or events. Do not use multiple `TIMEONTARGET` values on one strike mission.
+  - *Check (Naval TLAM timing — mandatory)*: **Ships on the same Strike as `CreateMissionFlightPlan` launch Tomahawks at scenario start** — put the CG/DDG on a **separate** Strike mission with `starttime` + `TimeOnTargetStation` (~20–35 min before TOT), not on the air-strike mission. Document `-- @naval_package mission=<NavalStrikeName> launch=HH:MM:SS minutes_before_strike_tot=N`. Preflight fails on shared mission or missing schedule.
+  - *Check (Other assets — warning)*: CAP/AEW/ISR patrols without `starttime` while the air strike has a flight plan → warning (may launch early); SEAD and naval have their own hard checks.
+  - *Check (No nuclear weapons — unless `@scenario_policy nuclear=true`)*: Conventional scenarios use **no** nuclear loadouts (ALCM/TLAM-N/ACM) and set `use_nuclear_weapons='No'` in `ScenEdit_SetDoctrine` per side. After `place_ship` on CSG/escorts: `strip_nuclear_from_unit()` (mounts/magazines). Preflight: loadout name + required weapons in `DataLoadoutWeapons` (Optional=0); warns on nuclear DB defaults on ships.
+  - *Check (Mission assignment — mandatory)*: Every `place_ship` / `place_sub` / `place_sam` must get `ScenEdit_AssignUnitToMission` (directly or `for _, u in pairs(table)`). **Aircraft**: `spawn_air_wing` → existing mission; set `mission=` on `ScenEdit_AddUnit` (not for strike escort) **and** `assign_air_to_mission` (guid/name × mission name/guid, `SetUnit` fallback). After `CreateMissionFlightPlan`, CMO may show *Unassigned* — **pre-flight-plan refresh**, **post-refresh**, `sync_strike_package_tot()` (no second `createFlightPlans`; that clears assignments). Mission TOT via `mission_schedule_datetime()` → `YYYY.MM.DD` (match `ScenEdit_SetTime`). Strike escort: `AssignUnitToMission(..., true)`. Preflight: **`Mission assignment`** + **`Aircraft mission assignment`**. Land bases → warning if without mission.
+  - *Check (Carrier strike flight-size — mandatory for large CSG strike)*: With **≥6 carrier strikers** or **≥6 carrier escorts** on one Strike mission, CMO must **not** launch everything as singles. Set via `ScenEdit_SetMission`:
+    - `StrikeUseFlightSize = true`, `StrikeFlightSize = 4` (or 2/6/8), optionally `StrikeMinAircraftReq` (e.g. 8) so the first wave waits for enough aircraft;
+    - `EscortUseFlightSize = true`, `EscortFlightSizeShooter = 4`, optionally `EscortMinShooter`.
+    - Document in `-- @strike_package ... flight_size=4 use_flight_size=true min_aircraft=8 escort_flight_size=4 escort_use_flight_size=true`.
+    - Do **not** set `UseFlightSize=false` / `useflightsize=false` on that mission — that forces one-by-one launch. Preflight (`scripts/db_search.py --validate-scenario`) counts `spawn_air_wing` on `carrier.guid` and fails if settings are missing.
+  - *Check (Era-appropriate OOB — mandatory)*: Set `local scenario_year = YYYY` (and `db_series`) in every scenario. Preflight compares **no fixed DBID list**, but:
+    - **Platform**: `YearCommissioned` / `YearDecommissioned` from the DB vs `scenario_year` (not yet in service → **error**; DB marks decommissioned before scenario year → **warning**).
+    - **Strike munitions** (year ≥ 2000): loadout **name** heuristic — no strike that is **only** unguided (`LDGP`, `Mk84 LDGP`, …); precision/standoff (`JDAM`, `JSOW`, `GBU-`, `CALCM`, `JASSM`, …) is OK. **Error** from year ≥ 2010; **warning** 2000–2009.
+    - **Role fit** (not a mandatory type): F-35A/B/C and carrier type via **name** in the DB; bomber escort via **name** patterns — not "use aircraft X".
+    - **Deliberate exception** (e.g. obsolete defender): document in the scenario header; the validator cannot infer intent.
+  - *Check (Strike escort slot — mandatory)*: Fighter escort for a **Strike** mission belongs in the **escort layer of that Strike mission**, not on a loose patrol with "Escort" in the name. Use `ScenEdit_AssignUnitToMission(unit, '<StrikeMission>', true)` — 3rd parameter `escort=True` (see `.cursor/rules/cmo_api_reference.md`). Strikers on the same Strike mission: 2 parameters or `false`. `--validate-scenario` fails on patrol missions like `Strike Escort CAP` for strike escorts, or on Strike without at least one `escort=true` assignment.
+  - *Check (SEAD mission — mandatory)*: In CMO, **SEAD is always `ScenEdit_AddMission(..., 'Patrol', {type='SEAD', zone={...}})`**, never `Strike`. SEAD patrols engage **radar/emitter contacts within the zone**; SAMs on the strike target list are not automatically suppressed there.
+    - **Zones**: Every `place_sam` / IADS site must fall within the bounding box of at least one SEAD patrol zone (multiple zones for dispersed SAM belts: west/east).
+    - **Shooters**: Only aircraft with **ARM/SEAD loadout** on the Patrol/SEAD mission; **not** A/A-only escort on the same SEAD mission (`SEAD Escort CAP` = separate AAW patrol).
+    - **Numbers**: At least `ceil(number_of_SAM_sites / 2)` SEAD shooters per attacking side; **warning** if shooters `<` number of SAM sites.
+    - **Escort**: SEAD sorties still need **AAW/CAP escort** on another mission (see strike-package check); Growlers on SEAD do not count as escort.
+    - **WCS land**: With side-wide `WCS TIGHT` on land: on SEAD missions often set `weapon_control_status_land=0` (FREE) via `ScenEdit_SetDoctrine({side=..., mission=...})`, otherwise HARMs often will not fire on passive SAMs.
+    - **Timing vs strike (mandatory for large carrier SEAD)**: Do **not** let **Wild Weasel SEAD** and **`SEAD Escort CAP`** launch at scenario start while the strike wave is still on deck — Growlers/escort Hornets otherwise engage fighters before strike escorts/strikers are airborne. Set `ScenEdit_SetMission` with `starttime` + `TakeOffTime` (e.g. ~15–20 min before `@strike_package` TOT, after expected strike takeoff), optionally `UseFlightSize`/`FlightSize` on SEAD patrols. Document with `-- @sead_package missions=...,SEAD Escort CAP date=YYYY/MM/DD takeoff=HH:MM:SS minutes_before_strike_tot=N`. Set scenario start (`ScenEdit_SetTime`) before that takeoff. **Note**: 18 min before TOT is often **not enough transit** to the SEAD box (~270 nm from CSG) — preflight warns; intent is SEAD *start* shortly before strike, not full suppression at TOT.
+    - **Preflight**: `scripts/db_search.py --validate-scenario` also checks: `ScenEdit_SetTime` before SEAD takeoff; `@sead_package minutes_before_strike_tot` vs computed delta; SEAD not too early before TOT (before strike-escort launch); `@strike_package date` vs `DATEONTARGET`.
+  - *Check (Sustainability)*: Is there enough stock for repeated sorties or prolonged combat?
+- **Magazine Capacity**:
+  - *Check*: Is the magazine not overfilled? (CMO simulates space usage in magazines.)
+  - *Check*: Are magazines assigned to the correct weapon systems (mounts)?
 
-## 2. Sensoren & Detectie (The OODA Loop)
-- **Radar Horizon**: Sensoren op lage hoogte hebben een beperkt bereik door de kromming van de aarde.
-  - *Check*: Als eenheden laag vliegen (Sea-skimming), kunnen ze pas op korte afstand gedetecteerd worden. Is dit de bedoeling voor een verrassingsaanval?
-- **EMCON (Emission Control)**: Radars die aan staan verklappen de positie van de eenheid.
-  - *Check*: Moeten de aanvallers 'Silent' (Passive sensors only) naderen om detectie te voorkomen?
-- **Weer & Tijdstip**: Mist, regen en nacht beïnvloeden visuele en IR-sensoren.
-  - *Check*: Hebben de eenheden in een nachtscenario de juiste sensoren (FLIR, IR) om doelen te vinden?
+## 2. Sensors & Detection (The OODA Loop)
+- **Radar Horizon**: Low-altitude sensors have limited range due to earth curvature.
+  - *Check*: If units fly low (sea-skimming), they may only be detected at short range. Is that intended for a surprise attack?
+- **EMCON (Emission Control)**: Active radars reveal unit position.
+  - *Check*: Should attackers approach **Silent** (passive sensors only) to avoid detection?
+- **Weather & Time of Day**: Fog, rain, and night affect visual and IR sensors.
+  - *Check*: Do units in a night scenario have the right sensors (FLIR, IR) to find targets?
 
 ## 3. Doctrine & Rules of Engagement (ROE)
 - **Weapon Control Status (WCS)**:
-  - `FREE`: Schiet op alles wat niet als vriendelijk is geïdentificeerd.
-  - `TIGHT`: Schiet alleen op eenheden die als vijandig zijn geïdentificeerd.
-  - `HOLD`: Schiet alleen uit zelfverdediging.
-  - *Check*: Past de WCS bij de politieke situatie van het scenario?
-- **Proficiency Levels**: Beïnvloedt reactiesnelheid, schietvaardigheid en schadeherstel.
+  - `FREE`: Engage anything not identified as friendly.
+  - `TIGHT`: Engage only units identified as hostile.
+  - `HOLD`: Engage only in self-defense.
+  - *Check*: Does WCS match the political situation of the scenario?
+- **Proficiency Levels**: Affects reaction time, gunnery, and damage control.
   - *Levels*: `Novice`, `Cadet`, `Regular`, `Veteran`, `Ace`.
-  - *Check*: Is het Proficiency level van beide zijden in balans voor de gewenste moeilijkheidsgraad?
+  - *Check*: Are proficiency levels on both sides balanced for the desired difficulty?
 
-### Side-Specific Doctrine & Proficiency Profielen
-- **Doel**: Definieer per zijde een "karakterprofiel" (Proficiency + WCS + doctrinegedrag), zodat scenario's direct tactisch consistent starten.
-- **Profielvoorbeeld (Israël)**:
+### Side-Specific Doctrine & Proficiency Profiles
+- **Goal**: Define a "character profile" per side (Proficiency + WCS + doctrine behavior) so scenarios start tactically consistent.
+- **Profile example (Israel)**:
   - `Proficiency`: `Ace`
   - `WCS`: `TIGHT`
-  - Doctrine-focus: conservatief BVR-gebruik, `Winchester`/`Joker` discipline, gecontroleerde engagements.
-- **Profielvoorbeeld (Syrië)**:
+  - Doctrine focus: conservative BVR use, `Winchester`/`Joker` discipline, controlled engagements.
+- **Profile example (Syria)**:
   - `Proficiency`: `Regular`
   - `WCS`: `FREE`
-  - Doctrine-focus: agressievere salvo-inzet, `Shotgun`-achtig gedrag, minder brandstof-/munitiebehoud.
-- **Check**: Leg deze profielen expliciet vast bij scenario-opzet en pas ze alleen bewust aan als onderdeel van het scenario-design (niet willekeurig per prompt).
+  - Doctrine focus: more aggressive salvo use, `Shotgun`-like behavior, less fuel/ammo conservation.
+- **Check**: Record these profiles explicitly at scenario setup and change them only deliberately as part of scenario design (not arbitrarily per prompt).
 
-## 4. Carrier Strike Group (CSG) — niet alleen CVN
-- **Realiteit**: Een **CVN/CV** zet zelden alleen uit. Normale **Carrier Strike Group** bevat o.a. de carrier, **1× cruiser (CG)** en **2×+ destroyers (DDG)** voor AAW/ASW/ASuW, plus vaak onzichtbare ondersteuning (onderzeeër, olieerder) buiten het Lua-OOB.
-- **Waarom scripts soms wél solo-CVN hadden**: vereenvoudigd lucht-scenario (alleen carrier-air wing + landbasis), minder DB-zoekwerk; dat is **niet** representatief voor maritieme opbouw.
-- *Check (verplicht in preflight)*: Heeft elke zijde met **vliegdek + air wing op carrier** (`spawn_air_wing` / `add_air_unit_checked` met `carrier.guid`) minstens **2 nabije oppervlakte-escorts** (DDG/CG binnen ~0,55° van de carrier)? **Waarschuwing** bij precies 2 escorts; **LHA/LHD** minstens 1 escort.
-- *Check*: Groepeer escorts rond de carrier-coördinaten; losse DDG honderden km weg telt niet mee.
-- **Formatie (verplicht)**: CVN + DDGs in **één groep** (`form_csg_group`, lead = CVN). **CG/DDG niet allebei** op losse patrouille. **TLAM**: **CG-shooter** op aparte Strike `Caribbean TLAM Salvo` met `assign_ship_to_mission` / `assign_tlam_shooter` — **CG niet in `form_csg_group`** (CMO wist anders de strike-toewijzing); herhaal na `sync_strike_package_tot()`. Geen `TakeOffTime` op scheeps-strike. **MH-60R** op `CSG ASW Screen` / `CSG ASuW Patrol` als **vliegtuig**. Preflight: `assign_csg_group_missions`, geen CG in group members, post-sync `assign_tlam_shooter`.
-- **TOT-sync (verplicht)**: `local strike_package_tot` is de enige impacttijd voor **lucht** (`CreateMissionFlightPlan` TIMEONTARGET `YYYY/MM/DD`) en **TLAM** (`TimeOnTargetStation` via `mission_schedule_datetime` → `YYYY.MM.DD`). `sync_strike_package_tot()` zet beide strikes na flight plan opnieuw. `@strike_package time=` en `@naval_package tot=` moeten overeenkomen. `@strike_wave offset=0` voor naval + air. Preflight: **Strike TOT sync**.
-- **TOT-reachability (verplicht)**: Heuristiek op afstand CSG/Florida-staging → Cubaanse doelen: TLAM-launch ≥ Tomahawk-cruise, carrier `StartTime`→TOT ≥ transit+deck-overhead, B-52 CALCM ≥ bomber-transit, SEAD-takeoff vs afstand SEAD-zone. Preflight: **Strike TOT reachability** (ERROR/WARNING). Scenario-start moet vóór impliciete B-52-takeoff liggen.
-- *Preflight*: `scripts/db_search.py --validate-scenario` (heuristiek op `place_ship` + DB-`DataShip`-naam/type).
-- **Helikopters (SH-60 e.d.)**: Zitten in de **DB** op CVN/CG/DDG; spawn expliciet als `Air` met `base=ddg.guid` op **`Patrol` ASW** (torpedo-loadout) en **`Patrol` naval** (Hellfire/ASuW) wanneer de tegenstander **FAC/OPV/sub** heeft. Meestal vanaf **DDG/CG**, niet CVN. **DDG 51** heeft doorgaans **2** helovakken; meer toestellen op één schip → CMO **`Unable to host unit`**. Preflight telt `spawn_air_wing` / `add_air_unit_checked` op `*.guid` tegen `DataShipAircraftFacilities` + `DataAircraftFacility` (helos: pad/hangar/deck, geen katapult). Zet `starttime`/`TakeOffTime` vóór de CSG de Cubaanse kust nadert.
-- **Patrol-zones bij de CSG (verplicht in preflight)**: **Carrier CAP**, **Carrier AEW Orbit**, **CSG ASW Screen** en **CSG ASuW Patrol** moeten boven/nabij de carrier staan — niet een vast theater-raster (bv. 22.5°N terwijl de CSG op 19°N ligt). Declareer `local csg_lat, csg_lon = …` en zet reference points op `csg_lat ± offset` / `csg_lon ± offset`. Preflight (`Patrol zone proximity`) faalt als het zone-centroid **>1,5°** van `csg_lat/csg_lon` ligt. **Helo-patrouilles** (`spawn_air_wing` op `ddg51` / `bunker_hill` e.d.): zone-centroid binnen **~2°** van het host-schip. Theater-boxen (**SEAD Escort CAP**, **Wild Weasel**, **ISR Orbit**, Cubaanse CAP) zijn uitgesloten.
-- **Cubaanse / blauwe oppervlakte-dreiging**: Voor nuttige ASW/ASuW-helos een **MGR-achtige mix** (Wikipedia: Rio Damuji, Pauk II, Osa II, Sonya/Yevgenya, Zhuk, Stenka, Delfin) in open water. Gebruik **OperatorCountry Cuba** in de DB — geen Sovjet-export-hulls op side `Cuba`. Preflight: **`Operator country`** + **`Era fit`**.
-- **Kruisraketten (TLAM)**: CG/DDG hebben Tomahawk in VLS via de database. Voor een openingsalvo: wijs minstens één **CG/DDG** toe aan dezelfde **Strike (Land)**-missie als de luchtaanval (`ScenEdit_AssignUnitToMission(cruiser.guid, '<Strike>')`). Preflight **waarschuwt** als CSG-warships geen strike-toewijzing hebben.
-- **F-35-varianten**:
-  - **F-35C** → **CVN** (catapult-carrier), strike/CAP na SEAD; mag naast F/A-18 op dezelfde strike-missie (risico-gelaagd: stealth eerst, massa Hornet).
-  - **F-35B** → **LHA/LHD** (STOVL), **niet** op Nimitz/CVN in Lua.
-  - **F-35A** → landbases; niet op carrier spawnen.
-  - Preflight **fout** bij F-35A/B op `carrier.guid` in `spawn_air_wing` / `add_air_unit_checked`.
-- **Strike-munitie (tijdgeest)**: Geen vaste loadout-IDs — preflight classificeert loadout-**namen**. Vanaf ~2000 geen dumb-only strike; standoff (CALCM/JASSM-achtig) → geen verplichte jager-escort, wel AAR/bereik.
-- **Bommenwerpers op Strike**: escort/AAR-regels gelden op **type** (naam/heuristiek), niet op één specifiek toestel of loadout-ID.
+## 4. Carrier Strike Group (CSG) — Not CVN Alone
+- **Reality**: A **CVN/CV** rarely deploys alone. A typical **Carrier Strike Group** includes the carrier, **1× cruiser (CG)**, and **2×+ destroyers (DDG)** for AAW/ASW/ASuW, plus often unseen support (submarine, oiler) outside the Lua OOB.
+- **Why scripts sometimes had solo CVN**: simplified air-only scenario (carrier air wing + land base only), less DB lookup work; that is **not** representative of maritime order of battle.
+- *Check (mandatory in preflight)*: Does each side with **carrier + air wing on carrier** (`spawn_air_wing` / `add_air_unit_checked` with `carrier.guid`) have at least **2 nearby surface escorts** (DDG/CG within ~0.55° of the carrier)? **Warning** with exactly 2 escorts; **LHA/LHD** at least 1 escort.
+- *Check*: Group escorts around carrier coordinates; a lone DDG hundreds of km away does not count.
+- **Formation (mandatory)**: CVN + DDGs in **one group** (`form_csg_group`, lead = CVN). **Do not put both CG and DDG** on separate patrols. **TLAM**: **CG shooter** on a **separate** Strike `<NavalStrikeName>` with `assign_ship_to_mission` / `assign_tlam_shooter` — **CG not in `form_csg_group`** (CMO otherwise clears strike assignment); repeat after `sync_strike_package_tot()`. No `TakeOffTime` on ship Strike. **MH-60R** on `CSG ASW Screen` / `CSG ASuW Patrol` as **aircraft**. Preflight: `assign_csg_group_missions`, no CG in group members, post-sync `assign_tlam_shooter`.
+- **TOT sync (mandatory)**: `local strike_package_tot` is the single impact time for **air** (`CreateMissionFlightPlan` TIMEONTARGET `YYYY/MM/DD`) and **TLAM** (`TimeOnTargetStation` via `mission_schedule_datetime` → `YYYY.MM.DD`). `sync_strike_package_tot()` resets both strikes after the flight plan. `@strike_package time=` and `@naval_package tot=` must match. `@strike_wave offset=0` for naval + air. Preflight: **Strike TOT sync**.
+- **TOT reachability (mandatory)**: Heuristic on distance CSG/land staging → targets: TLAM launch ≥ Tomahawk cruise, carrier `StartTime`→TOT ≥ transit+deck overhead, B-52 CALCM ≥ bomber transit, SEAD takeoff vs SEAD zone distance. Preflight: **Strike TOT reachability** (ERROR/WARNING). Scenario start must be before implicit B-52 takeoff.
+- *Preflight*: `scripts/db_search.py --validate-scenario` (heuristic on `place_ship` + DB `DataShip` name/type).
+- **Helicopters (SH-60, etc.)**: In the **DB** on CVN/CG/DDG; spawn explicitly as `Air` with `base=ddg.guid` on **`Patrol` ASW** (torpedo loadout) and **`Patrol` naval** (Hellfire/ASuW) when the opponent has **FAC/OPV/sub**. Usually from **DDG/CG**, not CVN. **DDG 51** typically has **2** helo spots; more aircraft on one ship → CMO **`Unable to host unit`**. Preflight counts `spawn_air_wing` / `add_air_unit_checked` on `*.guid` against `DataShipAircraftFacilities` + `DataAircraftFacility` (helos: pad/hangar/deck, no catapult). Set `starttime`/`TakeOffTime` before the CSG reaches the threat coast.
+- **Patrol zones at the CSG (mandatory in preflight)**: **Carrier CAP**, **Carrier AEW Orbit**, **CSG ASW Screen**, and **CSG ASuW Patrol** must sit above/near the carrier — not a fixed theater grid (e.g. 22.5°N while the CSG is at 19°N). Declare `local csg_lat, csg_lon = …` and set reference points at `csg_lat ± offset` / `csg_lon ± offset`. Preflight (`Patrol zone proximity`) fails if the zone centroid is **>1.5°** from `csg_lat/csg_lon`. **Helo patrols** (`spawn_air_wing` on host ship guid): zone centroid within **~2°** of the host ship. Theater boxes (**SEAD Escort CAP**, **Wild Weasel**, **ISR Orbit**, land-based CAP) are excluded.
+- **Opponent surface threat**: For useful ASW/ASuW helos, include a **credible coastal/naval mix** (FAC, corvettes, OPVs, patrol craft, subs) in open water. Use the correct **OperatorCountry** in the DB — do not assign export hulls to a side that did not operate them. Preflight: **`Operator country`** + **`Era fit`**.
+- **Cruise missiles (TLAM)**: CG/DDG carry Tomahawk in VLS via the database. For an opening salvo: assign at least one **CG/DDG** to the same **Strike (Land)** mission as the air attack (`ScenEdit_AssignUnitToMission(cruiser.guid, '<Strike>')`). Preflight **warns** if CSG warships lack strike assignment.
+- **F-35 variants**:
+  - **F-35C** → **CVN** (catapult carrier), strike/CAP after SEAD; may share a strike mission with F/A-18 (layered risk: stealth first, Hornet mass).
+  - **F-35B** → **LHA/LHD** (STOVL), **not** on Nimitz/CVN in Lua.
+  - **F-35A** → land bases; do not spawn on carrier.
+  - Preflight **error** for F-35A/B on `carrier.guid` in `spawn_air_wing` / `add_air_unit_checked`.
+- **Strike munitions (era)**: No fixed loadout IDs — preflight classifies loadout **names**. From ~2000, no dumb-only strike; standoff (CALCM/JASSM-like) → no mandatory fighter escort, but check AAR/range.
+- **Bombers on Strike**: escort/AAR rules apply by **type** (name/heuristic), not a single aircraft or loadout ID.
 
-## 5. Eenheid Plaatsing (Land vs Water)
-- **Schepen & onderzeeërs**: Mogen **niet** op land geplaatst worden (`cannot place ship over land`). Gebruik open zee (positieve diepte / elevation ≤ 0).
-  - *Check (verplicht)*: Vóór `ScenEdit_AddUnit` voor `Ship`/`Sub`: `World_GetElevation({latitude=..., longitude=...})`. Als elevation **> 0** → locatie is land; kies andere coördinaten of verifieer op de kaart (bijv. zuidelijke Caraïbische Zee i.p.v. boven Cuba).
-  - *Check*: Onderzeeërs niet te ondiep (stranding) en niet te diep voor de database-unit; zie ook §6 bathymetry.
-- **Faciliteiten (vliegvelden, SAM)**: Meestal op **land**; niet in open oceaan tenzij de DB-unit een maritieme faciliteit is (haven/platform).
-  - *Check*: Zie `skills_cmo.md` — land-gebaseerde faciliteiten in water geven vaak `Placement aborted`.
-- **Preflight tooling**: `scripts/db_search.py --validate-scenario` controleert **geen** geo/elevation; plaatsingschecks blijven handmatig of via Lua `World_GetElevation` bij script-load.
+## 5. Unit Placement (Land vs Water)
+- **Ships & submarines**: Must **not** be placed on land (`cannot place ship over land`). Use open sea (positive depth / elevation ≤ 0).
+  - *Check (mandatory)*: Before `ScenEdit_AddUnit` for `Ship`/`Sub`: `World_GetElevation({latitude=..., longitude=...})`. If elevation **> 0** → location is land; pick other coordinates or verify on the map (e.g. open sea south of an island, not over the island).
+  - *Check*: Submarines not too shallow (grounding) and not too deep for the DB unit; see also §6 bathymetry.
+- **Facilities (airfields, SAM)**: Usually on **land**; not in open ocean unless the DB unit is a maritime facility (port/platform).
+  - *Check*: See `.cursor/rules/skills_cmo.md` — land-based facilities in water often yield `Placement aborted`.
+- **Preflight tooling**: `scripts/db_search.py --validate-scenario` does **not** check geo/elevation; placement checks remain manual or via Lua `World_GetElevation` at script load.
 
-## 6. Landingsfaciliteiten & Bases
-- **Runway & Pad Compatibility**: Niet elk vliegtuig kan op elke baan landen.
-  - *Check*: Is de landingsbaan lang genoeg voor de zware bommenwerpers? (Grote bases vs kleine airstrips).
-- **Carrier Operations**: Alleen vliegdekschip-geschikte vliegtuigen kunnen op carriers opereren.
-  - *Check*: Is het vliegtuig geclassificeerd als **Fixed Wing, Carrier Capable** (`Category = 2002`)?
-  - *Check*: **F-35C** / F/A-18 / E-2 / EA-18 op CVN; **F-35B** alleen op LHA/LHD — zie §4.
-  - *Check (Technical)*: Heeft het schip een **Carrier Catapult** (`DataAircraftFacility Type 2005`) en **Carrier Arresting Gear** (`Type 2007`) voor standaard carrier-vliegtuigen?
-  - *Check (verplicht in preflight)*: **Host-capaciteit** — per `place_ship` / `place_base` met `spawn_air_wing(..., N, ..., host.guid)` of `table.field.guid`: totaal **N** mag de som van geschikte **hangar/pad**-slots niet overschrijden (`scripts/db_search.py` → `Air host`). **Runway-only** placeholder-bases (`BASE_FACILITY_DBID`, bv. 1995) worden niet op slot-telling gecontroleerd (CMO beperkt daar niet zoals op DDG-pads). `for _, k in ipairs({...}) do ... base.guid` wordt per basissleutel gecontroleerd.
-  - *Check (STOVL/VTOL)*: Voor schepen zonder katapult (bijv. LHA/LHD): Is het vliegtuig **VTOL** (`RunwayLength 2001`) of **STOVL** (`RunwayLength 3005`)? Heeft het schip een **Ski Jump** (`Type 2006`) of **Flat-Top Deck** (`Type 6001/6002`)?
-  - *Check*: Probeer je geen land-gebaseerde F-15's (`Category 2001`) op een vliegdekschip te stationeren? Dit veroorzaakt fouten bij het toevoegen van eenheden via Lua.
+## 6. Landing Facilities & Bases
+- **Runway & Pad Compatibility**: Not every aircraft can land on every runway.
+  - *Check*: Is the runway long enough for heavy bombers? (Large bases vs small airstrips.)
+- **Carrier Operations**: Only carrier-suitable aircraft can operate from carriers.
+  - *Check*: Is the aircraft classified as **Fixed Wing, Carrier Capable** (`Category = 2002`)?
+  - *Check*: **F-35C** / F/A-18 / E-2 / EA-18 on CVN; **F-35B** only on LHA/LHD — see §4.
+  - *Check (Technical)*: Does the ship have **Carrier Catapult** (`DataAircraftFacility Type 2005`) and **Carrier Arresting Gear** (`Type 2007`) for standard carrier aircraft?
+  - *Check (mandatory in preflight)*: **Host capacity** — per `place_ship` / `place_base` with `spawn_air_wing(..., N, ..., host.guid)` or `table.field.guid`: total **N** must not exceed the sum of suitable **hangar/pad** slots (`scripts/db_search.py` → `Air host`). **Runway-only** placeholder bases (`BASE_FACILITY_DBID`, e.g. 1995) are not slot-counted (CMO does not limit there like DDG pads). `for _, k in ipairs({...}) do ... base.guid` is checked per base key.
+  - *Check (STOVL/VTOL)*: For ships without catapult (e.g. LHA/LHD): Is the aircraft **VTOL** (`RunwayLength 2001`) or **STOVL** (`RunwayLength 3005`)? Does the ship have a **Ski Jump** (`Type 2006`) or **Flat-Top Deck** (`Type 6001/6002`)?
+  - *Check*: Are you trying to station land-based F-15s (`Category 2001`) on a carrier? That causes errors when adding units via Lua.
 
-## 7. Wapens & WRA (Weapon Release Authority)
-- **Salvo Size**: Hoeveel raketten worden er op één doel afgevuurd?
-  - *Check*: Voorkom "overkill" (bijv. 8 raketten op 1 kleine vissersboot) door de WRA correct in te stellen in de doctrine.
-- **Engagement Range**: Wapens hebben een minimale en maximale range.
-  - *Check*: Bevindt het doelwit zich binnen de effectieve zone van de gekozen bewapening?
+## 7. Weapons & WRA (Weapon Release Authority)
+- **Salvo Size**: How many missiles are fired at one target?
+  - *Check*: Avoid "overkill" (e.g. 8 missiles on one small patrol boat) by setting WRA correctly in doctrine.
+- **Engagement Range**: Weapons have minimum and maximum range.
+  - *Check*: Is the target within the effective envelope of the chosen armament?
 
-## 8. Onderzeebootoorlogvoering (Submarine Operations & ASW)
-- **Thermocline (Layer)**: Temperatuurverschillen in het water kunnen sonar-signalen buigen.
-  - *Check*: Onderzeeërs kunnen zich onder de 'Layer' verstoppen om detectie door oppervlakteschepen te vermijden. Is de diepte van de onderzeeër correct ingesteld t.o.v. de thermocline?
-- **Convergence Zones (CZ)**: Geluid kan over grote afstanden reizen via diep water.
-  - *Check*: In diep water kunnen sensoren contacten oppikken op specifieke CZ-afstanden (bijv. 30 of 60 nm). Houd hier rekening mee bij de plaatsing van eenheden.
-- **Cavitation**: Snelle onderzeeërs maken veel lawaai door luchtbellen bij de schroef.
-  - *Check*: Als een onderzeeër sneller gaat dan ~5-10 knopen (afhankelijk van diepte), wordt hij veel makkelijker gedetecteerd.
-- **Batterij & Voortstuwing (Diesel-Electrisch vs Nuclear)**:
-  - *Check (SSK)*: Hebben diesel-electrische onderzeeërs (zoals de Khalid of Kalvari klasse) genoeg batterijcapaciteit voor hun operatie? Moeten ze regelmatig 'snorkelen' om op te laden? (Snorkelen verhoogt de detectiekans aanzienlijk).
-  - *Check (AIP)*: Beschikt de onderzeeër over Air-Independent Propulsion (AIP) voor langere onderwaterduur?
-- **Diepte-instellingen**:
-  - *Check*: Staat de onderzeeër op een veilige diepte voor de lokale zeebodem (Bathymetry)? Gebruik `World_GetElevation` om de diepte te checken.
-- **Sonar Handtekening (Signature)**:
-  - *Check*: Is de onderzeeër 'Silent' (Low speed, minimal emissions)? Gebruik de EMCON settings om onnodige actieve sonar-emissies te vermijden.
+## 8. Submarine Operations & ASW
+- **Thermocline (Layer)**: Temperature layers in the water can bend sonar.
+  - *Check*: Submarines can hide below the layer to avoid detection by surface ships. Is depth set correctly relative to the thermocline?
+- **Convergence Zones (CZ)**: Sound can travel long distances in deep water.
+  - *Check*: In deep water, sensors may pick up contacts at specific CZ ranges (e.g. 30 or 60 nm). Account for this in unit placement.
+- **Cavitation**: Fast submarines are noisy from bubble collapse at the screw.
+  - *Check*: Above ~5–10 kn (depth-dependent), a submarine is much easier to detect.
+- **Battery & Propulsion (Diesel-Electric vs Nuclear)**:
+  - *Check (SSK)*: Do diesel-electric submarines (e.g. Khalid or Kalvari class) have enough battery for the operation? Must they snorkel regularly to recharge? (Snorkeling greatly increases detection risk.)
+  - *Check (AIP)*: Does the submarine have Air-Independent Propulsion (AIP) for longer submerged endurance?
+- **Depth Settings**:
+  - *Check*: Is the submarine at a safe depth for local seabed (bathymetry)? Use `World_GetElevation` to check depth.
+- **Sonar Signature**:
+  - *Check*: Is the submarine **Silent** (low speed, minimal emissions)? Use EMCON to avoid unnecessary active sonar.
 
-## 9. Elektronische Oorlogsvoering (EW)
-- **OECM vs DECM**: Offensive ECM (Jammers) stoort vijandelijke radars, maar verraadt ook de positie (Home-on-Jam). Defensive ECM helpt bij het misleiden van inkomende raketten.
-  - *Check*: Heeft de aanvalsmacht speciale EW-vliegtuigen (bijv. EA-18G Growler) ter ondersteuning? Is de 'Jamming' doctrine ingeschakeld?
-- **ELINT (Electronic Intelligence)**: Passieve sensoren kunnen vijandelijke radars detecteren en identificeren zonder zelf ontdekt te worden.
-  - *Check*: Gebruik ELINT-eenheden om de 'Electronic Order of Battle' (EOB) van de vijand in kaart te brengen voordat de aanval begint.
+## 9. Electronic Warfare (EW)
+- **OECM vs DECM**: Offensive ECM (jammers) disrupts enemy radars but also reveals position (home-on-jam). Defensive ECM helps defeat incoming missiles.
+  - *Check*: Does the strike force include dedicated EW aircraft (e.g. EA-18G Growler)? Is jamming doctrine enabled?
+- **ELINT (Electronic Intelligence)**: Passive sensors can detect and identify enemy radars without being detected.
+  - *Check*: Use ELINT units to map the enemy **Electronic Order of Battle (EOB)** before the attack.
 
-## 10. Communicatie & Satellieten
-- **Comms Disruption**: Eenheden kunnen buiten bereik van hun hoofdkwartier raken of gestoord worden.
-  - *Check*: Is 'Comms Jamming' een factor in het scenario? Hebben eenheden alternatieve communicatielijnen (bijv. Satelliet)?
-- **Satellite Pass**: Satellieten vliegen in vaste banen en zijn niet constant boven het doelgebied.
-  - *Check*: Als het scenario afhankelijk is van satelliet-reconnaissance, komen er dan daadwerkelijk satellieten over tijdens het scenario?
+## 10. Communications & Satellites
+- **Comms Disruption**: Units can lose HQ contact or be jammed.
+  - *Check*: Is comms jamming a factor? Do units have alternate links (e.g. satellite)?
+- **Satellite Pass**: Satellites follow fixed orbits and are not always over the target area.
+  - *Check*: If the scenario depends on satellite reconnaissance, do passes occur during the scenario timeframe?
 
-## 11. Civiel Verkeer & Neutrale Partijen
-- **Collateral Damage**: Het raken van burgers kan strafpunten opleveren of escalatie veroorzaken.
-  - *Check*: Is er civiel scheepvaart- of luchtverkeer aanwezig om de identificatie van doelen lastiger te maken?
-- **Identification**: Zorg dat neutrale eenheden niet per ongeluk als vijandig worden gemarkeerd (WCS Tight/Hold).
+## 11. Civil Traffic & Neutral Parties
+- **Collateral Damage**: Hitting civilians can cost points or escalate the scenario.
+  - *Check*: Is civil shipping or air traffic present to complicate target identification?
+- **Identification**: Ensure neutral units are not marked hostile by mistake (WCS Tight/Hold).
 
-## 12. Terrein & Omgeving (Land Operations)
-- **Line of Sight (LOS)**: Bergen en gebouwen blokkeren radars en wapensystemen op land.
-  - *Check*: Staan de SAM-sites op strategische hoogtes? Worden ze niet geblokkeerd door nabijgelegen heuvels?
-- **Mobility**: Verschillende terreintypes (moeras, bos, stad) beïnvloeden de snelheid van landeenheden.
-  - *Check*: Is het pad van de landeenheden realistisch gezien het terrein?
+## 12. Terrain & Environment (Land Operations)
+- **Line of Sight (LOS)**: Mountains and buildings block land radars and weapons.
+  - *Check*: Are SAM sites on strategic high ground? Are they masked by nearby hills?
+- **Mobility**: Terrain types (marsh, forest, urban) affect land unit speed.
+  - *Check*: Are land unit paths realistic for the terrain?
 
-## 13. Logistiek & Cargo Operations
-- **Cargo Transfers**: Eenheden kunnen lading (troepen, voorraden) overdragen tussen bases en schepen.
-  - *Check*: Gebruik `ScenEdit_TransferCargo` om items te verplaatsen. Is de ontvangende unit (`Facility`, `Ship`) groot genoeg voor de lading?
-- **Unloading**: Het lossen van cargo kost tijd.
-  - *Check*: Plan je scenario zo dat troepen niet direct na aankomst inzetbaar zijn als ze nog moeten uitladen (`ScenEdit_UnloadCargo`).
+## 13. Logistics & Cargo Operations
+- **Cargo Transfers**: Units can move cargo (troops, supplies) between bases and ships.
+  - *Check*: Use `ScenEdit_TransferCargo` to move items. Is the receiving unit (`Facility`, `Ship`) large enough?
+- **Unloading**: Unloading cargo takes time.
+  - *Check*: Plan so troops are not combat-ready immediately on arrival if they still need `ScenEdit_UnloadCargo`.
 
-## 14. Mijnenoorlogvoering
-- **Minefields**: Mijnen kunnen passief gebieden afsluiten.
-  - *Check*: Gebruik `ScenEdit_AddMinefield` om velden te leggen. Zijn er mijnenvegers aanwezig voor de tegenpartij om een pad vrij te maken?
-- **Detectie**: Mijnen zijn erg lastig te detecteren zonder gespecialiseerde sonar.
-  - *Check*: Heeft het scenario de juiste balans tussen 'onzichtbare' dreiging en detectiemogelijkheden?
+## 14. Mine Warfare
+- **Minefields**: Mines can passively deny areas.
+  - *Check*: Use `ScenEdit_AddMinefield` to lay fields. Does the opponent have mine countermeasures to clear a path?
+- **Detection**: Mines are hard to detect without specialized sonar.
+  - *Check*: Does the scenario balance invisible threat vs detection capability?
 
-## 15. Tijdgeest & era-appropriate OOB (geen vaste unit-lijst)
+## 15. Era-Appropriate OOB (No Fixed Unit List)
 
-- **Principe**: Het scenariojaar bepaalt wat **realistisch** is — niet een hardcoded “gebruik F-35C id 824”-lijst. Kies units via `scripts/db_search.py` binnen de juiste `db_series`/`version`, dan valideert preflight of ze bij `scenario_year` passen.
-- **Verplicht in Lua**: `local scenario_year = YYYY` (bijv. 1989, 2026) naast `db_series` / DB-lock.
-- **Wat `--validate-scenario` wél doet (generiek)**:
-  - DB **in-/uitdienst** vs scenariojaar voor elk uniek vliegtuig en schip in het script.
-  - **Munitie-era**: strike-loadouts met alleen unguided namen in moderne jaren (zie §1).
-  - **Rol-fit**: carrier-capable varianten, CSG-samenstelling, SEAD=Patrol, tanker bij langeafstands-strike — op **categorie/naam**, niet op één nationale inventaris.
-- **Wat het níet doet**: geen eis “minstens 4× stealth” of “alleen Super Hornet”; geen vervanging van scenario-design. Oude tegenstanders (MiG-21, SA-2) in 2026 mogen **bewust** — verwacht dan waarschuwingen op uit-dienst-data tenzij je dat in comments uitlegt.
-- **Workflow**: jaar → DB-serie (§16) → zoek passende units → loadouts met precisie/standoff voor dat jaar → preflight.
+- **Principle**: Scenario year determines what is **realistic** — not a hardcoded "use F-35C id 824" list. Choose units via `scripts/db_search.py` within the correct `db_series`/`version`; preflight then checks fit against `scenario_year`.
+- **Required in Lua**: `local scenario_year = YYYY` (e.g. 1989, 2026) alongside `db_series` / DB lock.
+- **What `--validate-scenario` does (generic)**:
+  - DB **commission/decommission** vs scenario year for each unique aircraft and ship in the script.
+  - **Munitions era**: strike loadouts with only unguided names in modern years (see §1).
+  - **Role fit**: carrier-capable variants, CSG composition, SEAD=Patrol, tanker for long-range strike — by **category/name**, not a single national inventory.
+- **What it does not do**: no requirement for "at least 4× stealth" or "Super Hornet only"; it does not replace scenario design. Deliberate obsolete opponents (MiG-21, SA-2) in 2026 are allowed — expect decommission warnings unless explained in comments.
+- **Workflow**: year → DB series (§16) → search suitable units → precision/standoff loadouts for that year → preflight.
 
 ## 16. Database Series Mapping (DB3K vs CWDB)
-- **Harde Jaarregel**:
-  - Als `Jaar > 1980` -> gebruik `DB3K`.
-  - Als `Jaar < 1980` -> gebruik `CWDB`.
-- **Check**: Kies eerst de database-serie op basis van scenariojaar, en zoek daarna pas alle DBIDs/Loadouts/Weapons binnen diezelfde serie.
-- **Kritieke waarschuwing**: Mix nooit ID's uit `DB3K` en `CWDB` in hetzelfde script of scenario-objectmodel; dit kan leiden tot fatale fouten/crashes in de CMO-engine.
+- **Hard year rule**:
+  - If `Year > 1980` → use `DB3K`.
+  - If `Year < 1980` → use `CWDB`.
+- **Check**: Choose the database series from scenario year first, then look up all DBIDs/loadouts/weapons within that same series.
+- **Critical warning**: Never mix IDs from `DB3K` and `CWDB` in the same script or scenario object model; that can cause fatal errors/crashes in the CMO engine.
 
 ---
-*Gebruik deze checks als een pre-flight checklist voordat je het definitieve Lua-script oplevert.*
+*Use these checks as a pre-flight checklist before delivering the final Lua script.*

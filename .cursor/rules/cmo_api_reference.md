@@ -1,6 +1,6 @@
 # CMO Lua API Skills
 
-Dit bestand bevat de technische specificaties van de Command: Modern Operations Lua API in een format geoptimaliseerd voor AI agents.
+This file contains the Command: Modern Operations Lua API in a format optimized for AI agents. Pair with `.cursor/rules/logic_checks_cmo.md` for scenario validation rules.
 
 ## Functions
 
@@ -298,7 +298,7 @@ This function assign a unit to a mission. The 'UnitX' can be used as the unitnam
 **Parameters:**
 - **unitname** (`string`): The name/GUID of the unit to assign
 - **mission** (`string`): The mission name/GUID to assign to
-- **escort** (`True/False`) (optioneel): If the mission is a strike one, then assign unit to the 'Escort' for the strike [Default=False]
+- **escort** (`True/False`) (optional): If the mission is a strike one, then assign unit to the 'Escort' for the strike [Default=False]
 
 **Returns:** `True/False True if Successful`
 
@@ -318,7 +318,7 @@ This function creates flights for a mission.
 - **TAKEOFFDATE =** (`string`): The mission takeoff day, YYYY/MM/DD
 - **TAKEOFFTIME  =** (`string`): The mission takeoff time, HH:MM:SS
 
-**Na creatie:** haal de mission-wrapper op en ververs waypoint-tijden met **colon-syntax** (zie [Wrapper-aanroep](#wrapper-aanroep-in-lua-verplicht)):
+**After creation:** fetch the mission wrapper and refresh waypoint times with **colon syntax** (see [Calling wrappers in Lua](#calling-wrappers-in-lua-required)):
 
 ```lua
 ScenEdit_CreateMissionFlightPlan('United States', 'My Strike', {
@@ -450,9 +450,9 @@ This function creates one or more reference point(s) as defined by the table. It
 - **locked =** (`True/False`): True if the reference point is locked
 - **longitude =** (`longitude`): The longitude of the new reference point
 - **name =** (`string`): The name of the new reference point
-- **relativeto =** (`string`) (verplicht): The unit name/guid that all the RP(s) relate to, if required
-- **relativeto_contact =** (`string`) (verplicht): The contact name/guid that all the RP(s) relate to, if required
-- **relativeto_rp =** (`string`) (verplicht): The RP name/guid that all the RP(s) relate to, if required
+- **relativeto =** (`string`) (required): The unit name/guid that all the RP(s) relate to, if required
+- **relativeto_contact =** (`string`) (required): The contact name/guid that all the RP(s) relate to, if required
+- **relativeto_rp =** (`string`) (required): The RP name/guid that all the RP(s) relate to, if required
 - **side =** (`string`): The side the reference point is visible to
 
 **Returns:** `ReferencePoint A reference point wrapper for the new reference point, or the last one in the area if supplied.`
@@ -474,7 +474,7 @@ This function creates a non-navigation or exclusion zone. The Reference Points a
 - **hidden =** (`True/False`): Are Zone RPs hidden?
 - **affects =** (`table {}list of core unit types ('SHIP', 'AIRCRAFT', etc) affected`): Zone applies to these core unit types
 - **markAs =** (`posture`): Units entering the zone are treated as (posture towards them) [exclusion zone only]
-- **relativeto =** (`string`) (verplicht): The unit name/guid that all the RP(s) relate to, if required
+- **relativeto =** (`string`) (required): The unit name/guid that all the RP(s) relate to, if required
 - **area =** (`table`):
 - **name =** (`string`): The name of the new reference point
 - **latitude =** (`latitude`): The latitude of the new reference point
@@ -566,9 +566,9 @@ This function Updates the values contained in the table. Values may be omitted i
 - **locked =** (`True/False`): True if the point is locked
 - **bearing =** (`number (0-360)`): Bearing from the 'relative' unit
 - **bearingtype =** (`typeFixed (0) or Rotating (1)`): Type of bearing
-- **relativeto =** (`string`) (verplicht): The unit name/guid that all the RP(s) relate to, if required
-- **relativeto_contact =** (`string`) (verplicht): The contact name/guid that all the RP(s) relate to, if required
-- **relativeto_rp =** (`string`) (verplicht): The RP name/guid that all the RP(s) relate to, if required
+- **relativeto =** (`string`) (required): The unit name/guid that all the RP(s) relate to, if required
+- **relativeto_contact =** (`string`) (required): The contact name/guid that all the RP(s) relate to, if required
+- **relativeto_rp =** (`string`) (required): The RP name/guid that all the RP(s) relate to, if required
 - **clear =** (`True/False`): Remove the 'relative to' associated with the reference point(s)
 - **area =** (`table`):
 - **name =** (`string`): The name of the reference point
@@ -599,7 +599,7 @@ This function updates a non-navigation or exclusion zone for a side. You only ne
 - **hidden =** (`True/False`): Are Zone RPs hidden?
 - **affects =** (`table { } list of core unit types ('SHIP', 'AIRCRAFT', etc) affected`): Zone applies to these core unit types
 - **markAs =** (`posture`): Units entering the zone are treated as (posture towards them) [exclusion zone only]
-- **relativeto =** (`string`) (verplicht): The unit name/guid that all the RP(s) relate to, if required
+- **relativeto =** (`string`) (required): The unit name/guid that all the RP(s) relate to, if required
 - **areaColor =** (`string`): The zone color to show as a HTML color code
 - **rename =** (`string`): Description to change zone to
 - **area =** (`table`):
@@ -831,7 +831,7 @@ This function adds, removes or fills out weapon reloads on a local mount of an u
 - **side =** (`string`): The side name/GUID of the unit
 - **unitname =** (`string`): The name of unit
 - **guid =** (`string`): The GUID of the unit
-- **wpn_dbid =** (`number`) (verplicht): The weapon database ID to be updated **MANDATORY**
+- **wpn_dbid =** (`number`) (required): The weapon database ID to be updated **MANDATORY**
 - **mount_guid =** (`string`): The mount GUID on the unit to be updated
 - **number =** (`number`): Number to be added or removed
 - **remove =** (`True/False`): If true, this will debuct the number of weapons from the unit/mount
@@ -873,17 +873,17 @@ This function adds a new unit to a side based on the supplied table. As the func
 
 **Parameters:**
 - **table** (`table`):
-- **type =** (`UnitType`) (verplicht): The description of the type of unit to add — gebruik **`'Air'`**, **`'Ship'`**, **`'Sub'`** (niet `'Submarine'`), **`'Facility'`**, enz. Zie werkende voorbeelden in `generated/pakistan_india_scenario.lua`.
-- **unitname =** (`string`) (verplicht): The name of the unit
-- **side =** (`string`) (verplicht): The side name/GUID to add the unit to
-- **dbid =** (`number`) (verplicht): The database id of the unit
+- **type =** (`UnitType`) (required): Unit type — use **`'Air'`**, **`'Ship'`**, **`'Sub'`** (not `'Submarine'`), **`'Facility'`**, etc.
+- **unitname =** (`string`) (required): The name of the unit
+- **side =** (`string`) (required): The side name/GUID to add the unit to
+- **dbid =** (`number`) (required): The database id of the unit
 - **base =** (`string`): Unit base name/GUID where the unit will be 'hosted' (applies to types AIR, SHIP, SUB)
-- **latitude =** (`Latitude`) (optioneel): Not required if a base is defined as unit adopts that location
-- **longitude =** (`Longitude`) (optioneel): Not required if a base is defined as adopts that location
-- **altitude =** (`Altitude`) (verplicht): The Unit altitude (applies to AIR). Wanneer een `base` is opgegeven voor een AIR-unit, gebruik dan `altitude = '0'` (string format) om .NET wrapper errors te voorkomen. Voor andere types (SHIP, SUB, FACILITY), gebruik `altitude = 0` (getal).
+- **latitude =** (`Latitude`) (optional): Not required if a base is defined as unit adopts that location
+- **longitude =** (`Longitude`) (optional): Not required if a base is defined as adopts that location
+- **altitude =** (`Altitude`) (required): Unit altitude (AIR). When `base` is set for AIR, use `altitude = '0'` (string) to avoid .NET wrapper errors. For SHIP, SUB, FACILITY use `altitude = 0` (number).
 - **loadoutid =** (`number`): Aircraft database loadout id (applies to type AIR)
 - **orbit =** (`number`): Orbit index (applies to type SATELLITE)
-- **guid =** (`string`) (optioneel): Optional custom GUID to override the auto generated one
+- **guid =** (`string`) (optional): Optional custom GUID to override the auto generated one
 
 **Returns:** `Unit A wrapper defining the added unit. This will be nil if the function failed to add the unit.`
 
@@ -899,7 +899,7 @@ This function adds weapons to a unit magazine. Unlike ScenEdit_AddReloadsToUnit(
 - **side =** (`string`): The side name/GUID of the unit
 - **unitname =** (`string`): The name of unit
 - **guid =** (`string`): The GUID of the unit
-- **wpn_dbid =** (`number`) (verplicht): The weapon database ID to be updated **MANDATORY**
+- **wpn_dbid =** (`number`) (required): The weapon database ID to be updated **MANDATORY**
 - **mag_guid =** (`string`): The magazine GUID on the unit to be updated
 - **maxcap =** (`number`): Use this as an override for the magazine's current maximum capacity for the weapon
 - **new =** (`True/False`): If true, allows the weapon to be treated as a new item in the magazine if it doesn't exist
@@ -1131,11 +1131,11 @@ This function Sets the loadout for a aircraft unit
 - **table** (`table`):
 - **unitname =** (`string`): Unit description/name or GUID to update. Can use 'UnitX' here if in an Event Action
 - **LoadoutID =** (`number`): The ID of the new loadout; 0 = use the current loadout
-- **TimeToReady_Minutes =** (`number`) (optioneel): How many minutes until the loadout is ready (default = database loadout time) (_optional_)
-- **IgnoreMagazines =** (`True/False`) (optioneel): If the new loadout should rely on the magazines having the right weapons ready (default = false) (_optional_)
-- **ExcludeOptionalWeapons =** (`True/False`) (optioneel): Exclude optional weapons from loadout (default = false) (_optional_)
-- **Wpn_DBID =** (`number`) (verplicht): Weapon DB number - required if WPN_GUID is not supplied
-- **Wpn_GUID =** (`string`) (optioneel): Actual weapon to update - DBID is not required as this take precedence (_optional_)
+- **TimeToReady_Minutes =** (`number`) (optional): How many minutes until the loadout is ready (default = database loadout time) (_optional_)
+- **IgnoreMagazines =** (`True/False`) (optional): If the new loadout should rely on the magazines having the right weapons ready (default = false) (_optional_)
+- **ExcludeOptionalWeapons =** (`True/False`) (optional): Exclude optional weapons from loadout (default = false) (_optional_)
+- **Wpn_DBID =** (`number`) (required): Weapon DB number - required if WPN_GUID is not supplied
+- **Wpn_GUID =** (`string`) (optional): Actual weapon to update - DBID is not required as this take precedence (_optional_)
 - **Number =** (`number`): Number to change current weapon load by (sign ignored)
 - **Remove =** (`True/False`): Deduct 'number' rather than add
 
@@ -1507,7 +1507,7 @@ This function removes a key (and its value) from the persistent keystore. To cle
 
 **Parameters:**
 - **key** (`string`): The key to clear or empty for all
-- **forCampaign** (`True/False`) (optioneel): Use key store for passing data to next scenario in a campaign. [Experimental] [Optional, default = false]
+- **forCampaign** (`True/False`) (optional): Use key store for passing data to next scenario in a campaign. [Experimental] [Optional, default = false]
 
 **Returns:** `True/FalseTrue if Successful`
 
@@ -1525,10 +1525,10 @@ The function's purpose is to show a 'bark' at a specific location. Barks are sho
 - **R** (`number`): The 'Red' component of the color (0-255) to show the text in
 - **G** (`number`): The 'Green' component of the color (0-255)
 - **B** (`number`): The 'Blue' component of the color (0-255)
-- **moveUpward** (`True/False`) (optioneel): [Optional] Default is True. This will move the text upwards
-- **fade** (`True/False`) (optioneel): [Optional] Default is True. This controls the fading out of the text
-- **lifeTime** (`number`) (optioneel): [Optional] Default is 1 second. This controls how long the text stays visible
-- **fontSize** (`number`) (optioneel): [Optional] Default is 18. This controls the fonst size of the text
+- **moveUpward** (`True/False`) (optional): [Optional] Default is True. This will move the text upwards
+- **fade** (`True/False`) (optional): [Optional] Default is True. This controls the fading out of the text
+- **lifeTime** (`number`) (optional): [Optional] Default is 1 second. This controls how long the text stays visible
+- **fontSize** (`number`) (optional): [Optional] Default is 18. This controls the fonst size of the text
 
 ---
 
@@ -1545,10 +1545,10 @@ The function's purpose is to show a 'bark' at a specific location. The notificat
 - **R** (`number`): The 'Red' component of the color (0-255) to show the text in
 - **G** (`number`): The 'Green' component of the color (0-255)
 - **B** (`number`): The 'Blue' component of the color (0-255)
-- **moveUpward** (`True/False`) (optioneel): [Optional] Default is True. This will move the text upwards
-- **fade** (`True/False`) (optioneel): [Optional] Default is True. This controls the fading out of the text
-- **lifeTime** (`number`) (optioneel): [Optional] Default is 1 second. This controls how long the text stays visible
-- **fontSize** (`number`) (optioneel): [Optional] Default is 18. This controls the fonst size of the text
+- **moveUpward** (`True/False`) (optional): [Optional] Default is True. This will move the text upwards
+- **fade** (`True/False`) (optional): [Optional] Default is True. This controls the fading out of the text
+- **lifeTime** (`number`) (optional): [Optional] Default is 1 second. This controls how long the text stays visible
+- **fontSize** (`number`) (optional): [Optional] Default is 18. This controls the fonst size of the text
 
 ---
 
@@ -1563,10 +1563,10 @@ The function's purpose is to show a 'bark' anchored on a unit. Barks are short t
 - **R** (`number`): The 'Red' component of the color (0-255) to show the text in
 - **G** (`number`): The 'Green' component of the color (0-255)
 - **B** (`number`): The 'Blue' component of the color (0-255)
-- **moveUpward** (`True/False`) (optioneel): [Optional] Default is True. This will move the text upwards
-- **fade** (`True/False`) (optioneel): [Optional] Default is True. This controls the fading out of the text
-- **lifeTime** (`number`) (optioneel): [Optional] Default is 1 second. This controls how long the text stays visible
-- **fontSize** (`number`) (optioneel): [Optional] Default is 18. This controls the fonst size of the text
+- **moveUpward** (`True/False`) (optional): [Optional] Default is True. This will move the text upwards
+- **fade** (`True/False`) (optional): [Optional] Default is True. This controls the fading out of the text
+- **lifeTime** (`number`) (optional): [Optional] Default is 1 second. This controls how long the text stays visible
+- **fontSize** (`number`) (optional): [Optional] Default is 18. This controls the fonst size of the text
 
 ---
 
@@ -1582,10 +1582,10 @@ The function's purpose is to show a 'bark' at a specific location. The notificat
 - **R** (`number`): The 'Red' component of the color (0-255) to show the text in
 - **G** (`number`): The 'Green' component of the color (0-255)
 - **B** (`number`): The 'Blue' component of the color (0-255)
-- **moveUpward** (`True/False`) (optioneel): [Optional] Default is True. This will move the text upwards
-- **fade** (`True/False`) (optioneel): [Optional] Default is True. This controls the fading out of the text
-- **lifeTime** (`number`) (optioneel): [Optional] Default is 1 second. This controls how long the text stays visible
-- **fontSize** (`number`) (optioneel): [Optional] Default is 18. This controls the fonst size of the text
+- **moveUpward** (`True/False`) (optional): [Optional] Default is True. This will move the text upwards
+- **fade** (`True/False`) (optional): [Optional] Default is True. This controls the fading out of the text
+- **lifeTime** (`number`) (optional): [Optional] Default is 1 second. This controls how long the text stays visible
+- **fontSize** (`number`) (optional): [Optional] Default is 18. This controls the fonst size of the text
 
 ---
 
@@ -1599,7 +1599,7 @@ This function export unit(s) in XML format to an INST file in folder 'ImportExpo
 - **unitList** (`table`):
 - **string** (`The`): name/GUID of the units to be exported
 - **fileData** (`table`):
-- **filename =** (`string`) (verplicht): The Filename is mandatory
+- **filename =** (`string`) (required): The Filename is mandatory
 - **name =** (`string`): The name to be displayed on the in-game list
 - **comment =** (`string`):
 
@@ -1614,7 +1614,7 @@ This function retrieves a value put into the persistent key store by ScenEdit_Se
 
 **Parameters:**
 - **key** (`string`): The key to fetch the value for
-- **forCampaign** (`True/False`) (optioneel): Read from the key store being passed to the next scenario in campaign. Optional, default = false
+- **forCampaign** (`True/False`) (optional): Read from the key store being passed to the next scenario in campaign. Optional, default = false
 
 **Returns:** `string The value associated with the key. "" if none exists.`
 
@@ -1690,7 +1690,7 @@ This function runs a script from a file. The file scriptmust be inside the [Comm
 
 **Parameters:**
 - **script** (`string`): The file containing the script to run.
-- **customPath** (`True/False`) (optioneel): Use the full path from 'script' name. Optional. Defaults to False.
+- **customPath** (`True/False`) (optional): Use the full path from 'script' name. Optional. Defaults to False.
 
 **Returns:** `True/False True if successful. If result is nil, then the method failed.`
 
@@ -1716,7 +1716,7 @@ This function Sets the value for a key in the persistent key store. This functio
 **Parameters:**
 - **key** (`string`): The key to associate with
 - **value** (`string`): The value to associate
-- **forCampaign** (`boolean`) (optioneel): Pass the store to next scenario in campaign. Optional, default = false
+- **forCampaign** (`boolean`) (optional): Pass the store to next scenario in campaign. Optional, default = false
 
 ---
 
@@ -1798,7 +1798,7 @@ The function purpose is to create a blank scenario based on the current DB or by
 **Signature:** `Tool_BuildBlankScenario ( useDBname )`
 
 **Parameters:**
-- **useDBname** (`string`) (optioneel): (Optional) file name from the DB folder
+- **useDBname** (`string`) (optional): (Optional) file name from the DB folder
 
 ---
 
@@ -1906,7 +1906,7 @@ This function returns the range between points, which can be a GUID of a unit/co
 **Parameters:**
 - **fromHere** (`table`): or { } of latitude = latitude longitude = longitude altitude = altitude Unit/Contact guid or a location point
 - **toHere** (`table`): or { } of latitude = latitude longitude = longitude altitude = altitude Unit/Contact guid or a location point
-- **useSlant** (`true`) (optioneel): Optional - calculate the slant distance accounting for altitde instead of the default horizontal distance
+- **useSlant** (`true`) (optional): Optional - calculate the slant distance accounting for altitde instead of the default horizontal distance
 
 ---
 
@@ -1939,7 +1939,7 @@ This function returns a circle around point.
 - **table** (`table`):
 - **latitude =** (`latitude`): The location of the central point
 - **longitude =** (`longitude`): The location of the central point
-- **numpoints =** (`number`) (verplicht): The number of points to generate on the circle's arc. A minimum of 3 is required
+- **numpoints =** (`number`) (required): The number of points to generate on the circle's arc. A minimum of 3 is required
 - **radius =** (`number`): The radius (NM) around the central point
 
 ---
@@ -2328,7 +2328,7 @@ This function updates the side options
 - **collectiveResponsibility =** (`True/False`): The side collective resposibility
 - **computerControlledOnly =** (`True/False`): The side is controlled by AI
 - **proficiency =** (`Proficiency`): The side proficiency
-- **switchto =** (`True/False`) (optioneel): [optional] Switch the current side to the 'side' parameter.
+- **switchto =** (`True/False`) (optional): [optional] Switch the current side to the 'side' parameter.
 
 ---
 
@@ -2384,32 +2384,32 @@ The function changes the current time compression ( the 'x#' on the UI).
 
 ## Wrappers & Objects
 
-### Wrapper-aanroep in Lua (verplicht)
+### Calling wrappers in Lua (required)
 
-CMO retourneert **wrapper-objecten** (`ScenEdit_GetMission`, `ScenEdit_GetUnit`, `ScenEdit_AddUnit`, …). Onderscheid:
+CMO returns **wrapper objects** (`ScenEdit_GetMission`, `ScenEdit_GetUnit`, `ScenEdit_AddUnit`, …). Distinction:
 
-| Soort | Syntax | Voorbeeld |
+| Kind | Syntax | Example |
 | :--- | :--- | :--- |
-| **Eigenschap** (field) | punt `.` | `mission.name`, `unit.guid` |
-| **Instance-methode** (`method()` in tabellen hieronder) | **dubbele punt `:`** | `mission:updateWPtimes()` |
+| **Field** | dot `.` | `mission.name`, `unit.guid` |
+| **Instance method** (`method()` in tables below) | **colon `:`** | `mission:updateWPtimes()` |
 
-Gebruik **niet** `mission.updateWPtimes()` — dat roept de .NET-methode aan **zonder** `self` en geeft:
+Do **not** use `mission.updateWPtimes()` — that calls the .NET method **without** `self` and yields:
 
 `instance method 'updateWPtimes' requires a non null target object`
 
-**Juist:**
+**Correct:**
 
 ```lua
-local mission = ScenEdit_GetMission('United States', 'Caribbean Thunder Strike')
+local mission = ScenEdit_GetMission('United States', 'My Strike')
 if mission then
     mission:updateWPtimes()
-    -- of: mission:createFlightPlans({ DATEONTARGET = '2026/06/01', TIMEONTARGET = '06:30:00' })
+    -- or: mission:createFlightPlans({ DATEONTARGET = '2026/06/01', TIMEONTARGET = '06:30:00' })
 end
 ```
 
-`if mission.updateWPtimes then` test alleen of de functie bestaat; de **aanroep** blijft `:updateWPtimes()`. Bij twijfel: `pcall(function() mission:updateWPtimes() end)`.
+`if mission.updateWPtimes then` only tests that the function exists; the **call** must still use `:updateWPtimes()`. When unsure: `pcall(function() mission:updateWPtimes() end)`.
 
-Dit geldt voor alle wrapper-`method(...)`-rijen in deze sectie (Mission, Flight, Loadout, Cargo, …).
+This applies to every wrapper `method(...)` row in this section (Mission, Flight, Loadout, Cargo, …).
 
 ### Cargo
 | Field | Type | Description |
@@ -2633,8 +2633,8 @@ Wrapper for mission flights (used in Mission Flight Plans).
 | removeAssignedCargo | method(CargoObjectType, dbid, guid) | Remove a non-mount cargo item from assigned cargo |
 | addAssignedCargoMount | method(dbid, quantity) | Add a mount cargo item to assigned cargo |
 | removeAssignedCargoMount | method(dbid, quantity) | Remove a mount cargo item from assigned cargo |
-| createFlightPlans | method({}) | Create mission flight plans — aanroep: `mission:createFlightPlans({ DATEONTARGET=..., TIMEONTARGET=... })` |
-| updateWPtimes | method() | Refresh the flight WP times — aanroep: `mission:updateWPtimes()` (**niet** `.updateWPtimes()`) |
+| createFlightPlans | method({}) | Create mission flight plans — call: `mission:createFlightPlans({ DATEONTARGET=..., TIMEONTARGET=... })` |
+| updateWPtimes | method() | Refresh the flight WP times — call: `mission:updateWPtimes()` (**not** `.updateWPtimes()`) |
 
 ### Mount
 | Field | Type | Description |
