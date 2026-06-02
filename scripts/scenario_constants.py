@@ -42,11 +42,32 @@ _CSG_ESCORT_MAX_DEG_DISTANCE = 0.55
 
 _CSG_FORMATION_VARS = ("nimitz", "bunker_hill", "ddg51", "ddg51_escort")
 
-_CSG_GROUP_MEMBER_VARS = ("nimitz", "ddg51", "ddg51_escort")
+_CSG_GROUP_MEMBER_VARS = ("nimitz", "bunker_hill", "ddg51", "ddg51_escort")
 
 _CSG_GROUP_LEAD_VAR = "nimitz"
 
 _CSG_STRIKE_SHIP_VAR = "bunker_hill"
+
+# assign_tlam_shooter(bunker_hill) or assign_tlam_shooter(bunker_hill, CSG_GROUP)
+_ASSIGN_TLAM_SHOOTER_CALL = (
+    rf"assign_tlam_shooter\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*(?:,\s*\w+\s*)?\)"
+)
+
+# setup_solo_tlam_shooter(bunker_hill) — preferred solo TLAM (CG not in CSG group)
+_SOLO_TLAM_CALL = rf"(?<!function\s)setup_solo_tlam_shooter\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*\)"
+
+# apply_naval_strike_flight_plan(bunker_hill, nil) — same intent as solo TLAM
+_APPLY_NAVAL_TLAM_CALL = (
+    rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*(?:,\s*\w+\s*)?\)"
+)
+
+# finalize_detached_tlam_shooter / setup_solo_tlam_shooter / apply_naval(..., nil) — CG outside CSG group
+_DETACHED_TLAM_CALL = (
+    rf"(?<!function\s)(?:finalize_detached_tlam_shooter\s*\(|setup_solo_tlam_shooter\s*\(|"
+    rf"apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*,\s*nil\s*\))"
+)
+
+_CSG_TLAM_SHIP_ASSIGN_CALL = rf"(?:{_ASSIGN_TLAM_SHOOTER_CALL}|{_APPLY_NAVAL_TLAM_CALL}|{_DETACHED_TLAM_CALL})"
 
 _CSG_ESCORT_VARS = ("ddg51", "ddg51_escort")
 

@@ -302,6 +302,17 @@ This function assign a unit to a mission. The 'UnitX' can be used as the unitnam
 
 **Returns:** `True/False True if Successful`
 
+**Practical note (repo):** Official Lua docs list **name/GUID** for both parameters ([Command Lua Docs — `ScenEdit_AssignUnitToMission`](https://commandlua.github.io/oldsite/index.html)). In generated scenarios we treat that as **asymmetric**:
+
+| Parameter | Prefer | Why |
+| :--- | :--- | :--- |
+| **unitname** | **GUID** (from `ScenEdit_AddUnit` / `GetUnit`) | Avoids duplicate-name ambiguity; matches forum/community practice. |
+| **mission** | **Mission name** (string from `ScenEdit_AddMission`) | Passing `GetMission().guid` often logs `Couldn't find the mission <guid>` and returns false, even when the same mission resolves by name. |
+
+Same applies when setting **`unit.mission`** or **`ScenEdit_SetUnit({ mission = … })`** — that path calls `AssignUnitToMission` internally; use the mission **name**, not its guid.
+
+`ScenEdit_SetMission` / `ScenEdit_GetMission` online docs describe the second argument as mission **name** only; local generated API text also allows guid — prefer **side + name** in scenario scripts. See `skills_cmo.md` §6 (init log) and `scripts/scenario_bootstrap.lua` (`assign_air_to_mission`, `assign_ship_to_mission`).
+
 ---
 
 ### ScenEdit_CreateMissionFlightPlan()
@@ -2841,7 +2852,7 @@ Wrapper for mission flights (used in Mission Flight Plans).
 | magazines | { Magazine, ... } | A table of magazines (with weapon loads) in the unit or group. Can be updated by ScenEdit_AddWeaponToUnitMagazine READ ONLY |
 | manualAltitude | string or number | Desired altitude/depth or 'OFF' to turn off manual mode |
 | manualSpeed | string or number | Desired speed or 'OFF' to turn off manual mode |
-| mission | Mission | The unit's assigned mission. Can be changed by setting to the Mission name or guid (calls ScenEdit_AssignUnitToMission) |
+| mission | Mission | The unit's assigned mission. Can be changed by setting to the Mission name or guid (calls ScenEdit_AssignUnitToMission). **Repo:** set **name**, not guid — see `ScenEdit_AssignUnitToMission` practical note. |
 | mounts | { Mount, ... } | A table of mounts (with weapon loads) in the unit or group. Can be updated by ScenEdit_AddReloadsToUnit READ ONLY |
 | name | string | The unit's name. |
 | newname | string | If changing existing unit, the unit's new name . |

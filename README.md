@@ -24,7 +24,7 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 |--------|---------|
 | **`scripts/`** | Python tools: search the equipment DB, validate Lua before play |
 | **`.cursor/rules/`** | Authoring guides for AI assistants (API reference, doctrine checks) |
-| **`cmo_config.example.json`** | Template for pointing tools at your game’s `DB` folder (not committed) |
+| **`cmo_config.example.ini`** | Template for pointing tools at your game’s `DB` folder (not committed) |
 | **`generated/`** | **Local** folder for scenario `.lua` you produce (gitignored) |
 
 **Problem we solve:** Scenario Lua is easy to get wrong — wrong aircraft/loadout pairs, ships on land, strike timing that cannot be flown, carrier groups without escorts, nuclear weapons on by accident. A single typo in a database ID fails silently in-game or hours into a test. **Preflight** runs dozens of static checks against the same database CMO uses.
@@ -34,7 +34,12 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
 2. Save Lua under `generated/` on your machine (not in this git repo).
 3. Run **`scripts/db_search.py --validate-scenario …`** (must pass or warn).
-4. Copy the `.lua` into CMO’s `Lua` folder and execute from the scenario editor.
+4. **CMO import:** inline bootstrap (CMO has no `dofile`):
+   ```bash
+   python scripts/embed_bootstrap.py generated/YOUR_SCENARIO.lua
+   ```
+   Load **`generated/YOUR_SCENARIO_import.lua`** in the scenario editor.
+5. Copy the `_import.lua` into CMO’s `Lua` folder if needed and execute from the editor.
 
 ```mermaid
 flowchart LR
@@ -53,18 +58,19 @@ flowchart LR
 cmo-scenario-generation/
 ├── README.md
 ├── LICENSE
-├── cmo_config.example.json   ← copy to cmo_config.json
+├── cmo_config.example.ini    ← copy to cmo_config.ini
 ├── generated/                ← local scenario Lua (gitignored)
 ├── scripts/                  ← Python (run from repo root)
 │   ├── db_search.py
 │   ├── merge_db.py
+│   ├── scenario_bootstrap.lua   ← shared Lua helpers (versioned)
 │   └── scenario_*.py
 ├── DB/                       ← optional local .db3 copy (gitignored)
 └── .cursor/rules/
 ```
 
-**In git:** tooling, rules, docs, config template.  
-**Not in git:** scenario `.lua`, CMO databases, `CMO_Master.db`, `cmo_config.json`, and anything under `generated/`.
+**In git:** tooling, rules, docs, config template, `scripts/scenario_bootstrap.lua`, `generated/.gitkeep`.  
+**Not in git:** scenario `.lua` under `generated/`, CMO databases, `CMO_Master.db`, `cmo_config.ini`.
 
 ---
 
@@ -90,25 +96,24 @@ Preflight and search need the same **SQLite `.db3` files** shipped with CMO. The
 2. Copy the template:
 
    ```bash
-   copy cmo_config.example.json cmo_config.json
+   copy cmo_config.example.ini cmo_config.ini
    ```
 
-3. Edit `cmo_config.json` — set **one** of:
+3. Edit `cmo_config.ini` — set **one** of:
 
    | Field | Meaning |
    |-------|---------|
-   | `db_dir` | Folder containing `DB3K_515.db3`, etc. (usually `…/Command Modern Operations/DB`) |
-   | `cmo_install_dir` | Game root directory; tools append `\DB` automatically |
+   | `cmo_install_dir` | **Preferred**. Game root directory; tools append `\DB` automatically |
+   | `db_dir` | Optional override: direct folder containing `DB3K_515.db3`, etc. |
 
    Example (Windows Steam — adjust to your path):
 
-   ```json
-   {
-     "db_dir": "C:/Program Files (x86)/Steam/steamapps/common/Command Modern Operations/DB"
-   }
+   ```ini
+   [cmo]
+   cmo_install_dir = C:/Program Files (x86)/Steam/steamapps/common/Command Modern Operations
    ```
 
-4. `cmo_config.json` stays on your machine only (gitignored).
+4. `cmo_config.ini` stays on your machine only (gitignored).
 
 Optional environment variables: `CMO_DB_DIR` or `CMO_INSTALL_DIR`.
 
@@ -130,7 +135,7 @@ You should see a path to your DB folder and a count of `.db3` files.
 
 ## Python tooling
 
-Requires **Python 3.10+** (stdlib + sqlite3). Run all commands from the **repository root**.
+Requires **Python 3.10+** (`sqlite3` + `PyYAML`). Run all commands from the **repository root**.
 
 Create `generated/` locally if it does not exist, then place your scenario `.lua` there.
 
@@ -175,6 +180,11 @@ Produces `CMO_Master.db` in the repo root (gitignored).
 
 1. **Install CMO** and configure database paths (see above).
 2. **Write or generate** a `.lua` scenario under `generated/` locally.
+   - Optional generator flow:
+     ```bash
+     python scripts/generate_scenario.py --spec generated/cuba_pressure_2026.yaml
+     ```
+     Use an explicit YAML spec each run (no default scenario selection).
 3. **Validate** with `scripts/db_search.py --validate-scenario` (above).
 4. **Copy** the script into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
 5. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.

@@ -110,7 +110,7 @@ def validate_scenario_air_loadouts(
             return {
                 "errors": [
                     f"Source database not found for {series} {version} in {resolve_db_dir()}. "
-                    "Place the matching .db3 file, fix cmo_config.json, or use --master.\n"
+                    "Place the matching .db3 file, fix cmo_config.ini, or use --master.\n"
                     + format_database_layout_message()
                     + "\n"
                     + format_config_setup_hint()
@@ -119,7 +119,7 @@ def validate_scenario_air_loadouts(
                 "ok": [],
             }
 
-    content = path.read_text(encoding="utf-8", errors="ignore")
+    content = load_scenario_lua_content(path)
     mission_map = _parse_scenario_missions(content)
     mission_zones = _parse_mission_zone_map(content)
     assignments = _extract_air_assignments(content)

@@ -158,7 +158,7 @@ def parse_args():
     parser.add_argument(
         "--db-dir",
         default=None,
-        help="Source .db3 directory (default: cmo_config.json or repo DB/)",
+        help="Source .db3 directory (default: cmo_config.ini or repo DB/)",
     )
     parser.add_argument("--output", default=os.fspath(MASTER_DB))
     parser.add_argument(
