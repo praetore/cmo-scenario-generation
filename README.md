@@ -70,7 +70,7 @@ cmo-scenario-generation/
 ```
 
 **In git:** tooling, rules, docs, config template, `scripts/scenario_bootstrap.lua`, `generated/.gitkeep`.  
-**Not in git:** scenario `.lua` under `generated/`, CMO databases, `CMO_Master.db`, `cmo_config.ini`.
+**Not in git:** scenario `.lua` under `generated/`, CMO databases, `cmo_config.ini`.
 
 ---
 
@@ -137,6 +137,8 @@ You should see a path to your DB folder and a count of `.db3` files.
 
 Requires **Python 3.10+** (`sqlite3` + `PyYAML`). Run all commands from the **repository root**.
 
+`--validate-scenario` also runs [luacheck](https://github.com/lunarmodules/luacheck) when available; on Windows it is downloaded automatically to `tools/luacheck/` on first use (`CMO_SKIP_LUACHECK_INSTALL=1` to disable).
+
 Create `generated/` locally if it does not exist, then place your scenario `.lua` there.
 
 ### Search equipment and loadouts
@@ -165,14 +167,7 @@ Exit codes:
 
 Checks include: aircraft/loadout compatibility, mission/loadout fit, carrier strike group composition, strike **time-on-target** vs range, SEAD timing, escort coverage for bombers, nuclear policy, operator country vs side, patrol zones near the CSG, and more.
 
-### Optional: merged master database
-
-```bash
-python scripts/merge_db.py
-python scripts/db_search.py --master "F-35" --series DB3K
-```
-
-Produces `CMO_Master.db` in the repo root (gitignored).
+Preflight and search use the **version-locked source `.db3`** for your scenario (`--series` / `--version` + `cmo_config.ini` → game `DB/`). That is what you need for real authoring.
 
 ---
 

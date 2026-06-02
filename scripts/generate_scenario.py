@@ -32,7 +32,7 @@ def _replace_local_number(text: str, name: str, value: int) -> str:
 
 
 def _replace_option(text: str, key: str, value: str) -> str:
-    pattern = rf"({re.escape(key)}\s*=\s*)([^,\n]+)"
+    pattern = rf"({re.escape(key)}\s*=\s*)([^,\}}\n]+)(?=[,\}}\n])"
     new_text, n = re.subn(pattern, rf"\g<1>{value}", text)
     if n == 0:
         raise ValueError(f"Could not find mission option '{key}'")

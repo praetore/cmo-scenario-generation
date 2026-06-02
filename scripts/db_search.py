@@ -1,11 +1,15 @@
 """Search CMO databases and run scenario preflight validation."""
 
 import argparse
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from cmo_config import format_config_setup_hint, resolve_db_dir
+from install_luacheck import install_luacheck_local, luacheck_exe_path
 from cmo_db import (
     format_database_layout_message,
     fts_match_query,
@@ -27,6 +31,106 @@ SEARCH_TABLES = [
     "DataWeapon",
     "DataGroundUnit",
 ]
+
+_LUACHECK_TOOLS_EXE = luacheck_exe_path()
+
+
+def _resolve_luacheck_bin():
+    """PATH, then repo tools/luacheck/ (install_luacheck.py default)."""
+    for name in ("luacheck", "luacheck.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if _LUACHECK_TOOLS_EXE.is_file():
+        return str(_LUACHECK_TOOLS_EXE)
+    return None
+
+
+def _try_install_luacheck():
+    """Repo-local install when not on PATH. Returns a status line or None on skip/failure."""
+    if os.environ.get("CMO_SKIP_LUACHECK_INSTALL"):
+        return None
+    if sys.platform != "win32":
+        return None
+    try:
+        install_luacheck_local(quiet=True)
+    except OSError as exc:
+        return f"Lua static analysis: local install failed ({exc})."
+    if _LUACHECK_TOOLS_EXE.is_file():
+        return "Lua static analysis: installed luacheck locally (tools/luacheck/)."
+    return "Lua static analysis: local install failed (download incomplete)."
+
+
+def _ensure_luacheck_bin():
+    """PATH or tools/luacheck/; on Windows, download locally if neither (no PATH changes)."""
+    found = _resolve_luacheck_bin()
+    if found:
+        return found, []
+    install_note = _try_install_luacheck()
+    notes = [install_note] if install_note else []
+    return _resolve_luacheck_bin(), notes
+
+
+def _run_luacheck(scenario_path):
+    """Run luacheck for static Lua preflight."""
+    luacheck_bin, install_notes = _ensure_luacheck_bin()
+    if not luacheck_bin:
+        warnings = [
+            n
+            for n in install_notes
+            if n and "failed" in n.lower()
+        ]
+        if not warnings:
+            warnings = [
+                "Lua static analysis: luacheck not found (install on PATH, or "
+                "python scripts/install_luacheck.py for tools/luacheck/; "
+                "CMO_SKIP_LUACHECK_INSTALL=1 disables local auto-download on Windows)."
+            ]
+        return {"errors": [], "warnings": warnings, "ok": []}
+
+    cmd = [
+        luacheck_bin,
+        "--codes",
+        "--ranges",
+        "--no-color",
+        "--globals",
+        "ScenEdit_*",
+        "VP_*",
+        "World_*",
+        "Tool_*",
+        "cmo",
+        scenario_path,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+    except Exception as exc:
+        return {
+            "errors": [],
+            "warnings": [f"Lua static analysis: failed to run luacheck: {exc}"],
+            "ok": [],
+        }
+
+    output_lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    ok_notes = [n for n in install_notes if n and "installed" in n.lower()]
+    if proc.returncode == 0:
+        ok = ["OK: Lua static analysis (luacheck) passed."]
+        ok.extend(ok_notes)
+        return {"errors": [], "warnings": [], "ok": ok}
+    if proc.returncode == 1:
+        return {
+            "errors": [],
+            "warnings": [f"Lua static analysis: {ln}" for ln in output_lines]
+            or ["Lua static analysis: luacheck warnings found."],
+            "ok": ok_notes,
+        }
+    return {
+        "errors": [f"Lua static analysis: {ln}" for ln in output_lines]
+        or ["Lua static analysis: luacheck failed with errors."],
+        "warnings": [],
+        "ok": ok_notes,
+    }
 
 
 def search_db(
@@ -103,6 +207,7 @@ def validate_scenario_air_loadouts(
     path = Path(scenario_path)
     if not path.exists():
         return {"errors": [f"Scenario file not found: {scenario_path}"], "warnings": [], "ok": []}
+    lint_report = _run_luacheck(str(path))
 
     if prefer_source and series and version and not db_path and not force_master:
         source_path = resolve_source_db(series, version)
@@ -157,9 +262,10 @@ def validate_scenario_air_loadouts(
 
     if not unique_pairs:
         return {
-            "errors": [],
-            "warnings": [f"No air dbid/loadoutid pairs found in {scenario_path}"],
-            "ok": [],
+            "errors": lint_report["errors"],
+            "warnings": lint_report["warnings"]
+            + [f"No air dbid/loadoutid pairs found in {scenario_path}"],
+            "ok": lint_report["ok"],
         }
 
     db = open_db(
@@ -171,9 +277,9 @@ def validate_scenario_air_loadouts(
     )
     cursor = db.cursor
 
-    errors = []
-    warnings = []
-    ok = [f"Validation database: {db.path}"]
+    errors = list(lint_report["errors"])
+    warnings = list(lint_report["warnings"])
+    ok = list(lint_report["ok"]) + [f"Validation database: {db.path}"]
 
     wrap_errors, wrap_warnings, wrap_ok = _validate_wrapper_colon_syntax(content)
     errors.extend(wrap_errors)

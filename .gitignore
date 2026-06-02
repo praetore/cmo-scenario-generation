@@ -11,6 +11,9 @@ DB/
 generated/*
 !generated/.gitkeep
 
+# Luacheck Windows binary (scripts/install_luacheck.py)
+tools/luacheck/
+
 # Python
 __pycache__/
 *.py[cod]
