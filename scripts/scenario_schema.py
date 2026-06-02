@@ -11,6 +11,7 @@ import yaml
 
 _HHMMSS_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 _YYYYMMDD_RE = re.compile(r"^\d{4}/\d{2}/\d{2}$")
+_BRIEFING_COMPLEXITY = frozenset({"Low", "Med", "High"})
 
 
 @dataclass
@@ -47,10 +48,26 @@ class StrikeOptionsSpec:
 
 
 @dataclass
+class BriefingSpec:
+    title: str | None
+    player_side: str
+    complexity: str
+    situation: str
+    friendly_oob: str
+    enemy_threat: str
+    environment: str
+    mission: str
+    roe: str
+    special_instructions: str
+    show_popup: bool
+
+
+@dataclass
 class ScenarioSpec:
     meta: MetaSpec
     timing: TimingSpec
     strike_options: StrikeOptionsSpec
+    briefing: BriefingSpec
 
 
 def _require_keys(obj: dict[str, Any], keys: list[str], section: str) -> None:
@@ -69,7 +86,7 @@ def load_scenario_spec(path: str | Path) -> ScenarioSpec:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("Scenario spec root must be a mapping/object")
-    _require_keys(raw, ["meta", "timing", "strike_options"], "root")
+    _require_keys(raw, ["meta", "timing", "strike_options", "briefing"], "root")
 
     meta_raw = raw["meta"]
     _require_keys(meta_raw, ["name", "year", "date", "input_lua", "output_lua"], "meta")
@@ -135,4 +152,40 @@ def load_scenario_spec(path: str | Path) -> ScenarioSpec:
         min_ready_escort=int(opts_raw["min_ready_escort"]),
         on_deactivate_unassign=bool(opts_raw["on_deactivate_unassign"]),
     )
-    return ScenarioSpec(meta=meta, timing=timing, strike_options=strike_options)
+
+    briefing_raw = raw["briefing"]
+    _require_keys(
+        briefing_raw,
+        [
+            "player_side",
+            "complexity",
+            "situation",
+            "friendly_oob",
+            "enemy_threat",
+            "environment",
+            "mission",
+            "roe",
+            "special_instructions",
+        ],
+        "briefing",
+    )
+    complexity = str(briefing_raw["complexity"])
+    if complexity not in _BRIEFING_COMPLEXITY:
+        raise ValueError(
+            f"briefing.complexity must be one of {sorted(_BRIEFING_COMPLEXITY)}, got '{complexity}'"
+        )
+    title_raw = briefing_raw.get("title")
+    briefing = BriefingSpec(
+        title=str(title_raw).strip() if title_raw else None,
+        player_side=str(briefing_raw["player_side"]),
+        complexity=complexity,
+        situation=str(briefing_raw["situation"]).strip(),
+        friendly_oob=str(briefing_raw["friendly_oob"]).strip(),
+        enemy_threat=str(briefing_raw["enemy_threat"]).strip(),
+        environment=str(briefing_raw["environment"]).strip(),
+        mission=str(briefing_raw["mission"]).strip(),
+        roe=str(briefing_raw["roe"]).strip(),
+        special_instructions=str(briefing_raw["special_instructions"]).strip(),
+        show_popup=bool(briefing_raw.get("show_popup", True)),
+    )
+    return ScenarioSpec(meta=meta, timing=timing, strike_options=strike_options, briefing=briefing)

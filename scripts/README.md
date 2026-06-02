@@ -17,7 +17,8 @@ python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --se
 | `cmo_config.py` | Resolve `cmo_config.ini` / env → DB directory |
 | `cmo_db.py` | SQLite open helpers |
 | `scenario_*.py` | Lua parsing and validation checks |
-| `generate_scenario.py` | Spec-driven Lua generator (v1; updates key locals/options in a base scenario; requires explicit `--spec` YAML) |
+| `generate_scenario.py` | Spec-driven Lua generator (v1; updates key locals/options; writes briefing .txt/.html/LOADDOC; optional HTML popup in Lua) |
+| `scenario_briefing.py` | Briefing plain-text + HTML renderer for CMO (not Markdown) |
 | `scenario_schema.py` | YAML schema + validation for declarative scenario specs |
 | `scenario_bootstrap.lua` | Shared CMO Lua helpers — **API docs in file header** (lines 1–100); see also `skills_cmo.md` §8 |
 | `embed_bootstrap.py` | Merge bootstrap into scenario for CMO import (no `dofile`) |

@@ -179,7 +179,7 @@ Preflight and search use the **version-locked source `.db3`** for your scenario 
      ```bash
      python scripts/generate_scenario.py --spec generated/cuba_pressure_2026.yaml
      ```
-     Use an explicit YAML spec each run (no default scenario selection).
+     Use an explicit YAML spec each run (no default scenario selection). Also writes `*_briefing.txt` (plain text), `*_briefing.html` + `*_briefing_loaddoc.txt` (CMO HTML/LOADDOC), and appends an in-game HTML popup via `ScenEdit_SpecialMessage` when `briefing.show_popup` is true (CMO does **not** render Markdown).
 3. **Validate** with `scripts/db_search.py --validate-scenario` (above).
 4. **Copy** the script into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
 5. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.

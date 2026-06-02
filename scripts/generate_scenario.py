@@ -3,6 +3,7 @@
 V1 scope:
 - Uses an existing Lua file as base template.
 - Rewrites key timing locals, strike options, and strike-package header annotation.
+- Writes briefing files (plain .txt, .html, LOADDOC line) and optional in-game HTML popup.
 - Keeps full scenario body (OOB, missions, targets) intact.
 """
 
@@ -12,6 +13,15 @@ import argparse
 import re
 from pathlib import Path
 
+from scenario_briefing import (
+    append_briefing_popup,
+    default_briefing_html_path,
+    default_briefing_loaddoc_path,
+    default_briefing_txt_path,
+    render_briefing_html,
+    render_briefing_loaddoc,
+    render_briefing_plain,
+)
 from scenario_schema import ScenarioSpec, load_scenario_spec
 
 
@@ -100,9 +110,19 @@ def main() -> int:
     out_path = (project_root / spec.meta.output_lua).resolve()
 
     base_text = in_path.read_text(encoding="utf-8")
-    rendered = render_from_spec(base_text, spec)
+    rendered = append_briefing_popup(render_from_spec(base_text, spec), spec)
     out_path.write_text(rendered, encoding="utf-8")
     print(f"Wrote {out_path}")
+
+    for path, content in (
+        (default_briefing_txt_path(spec.meta), render_briefing_plain(spec)),
+        (default_briefing_html_path(spec.meta), render_briefing_html(spec)),
+        (default_briefing_loaddoc_path(spec.meta), render_briefing_loaddoc(spec.meta)),
+    ):
+        out = (project_root / path).resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(content, encoding="utf-8")
+        print(f"Wrote {out}")
     return 0
 
 
