@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 from aeroapi import AeroAPIClient, AeroAPIError, latlong_box_query
+from aircraft_type_map import TypeResolver
 from cmo_config import aeroapi_key_source_label, resolve_aeroapi_key
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +39,8 @@ GENERATED_DIR = REPO_ROOT / "generated"
 # Verified civilian airliner in DB3K v515 (Boeing 737-800, civilian operator).
 # Used as a generic stand-in for ambient traffic; override with --dbid.
 DEFAULT_AIRLINER_DBID = 3970
+# Passenger loadout for the 737-800 (air units REQUIRE a LoadoutID); fallback only.
+DEFAULT_AIRLINER_LOADOUT = 19902
 
 FEET_PER_FL = 100.0
 METERS_PER_FOOT = 0.3048
@@ -56,8 +59,12 @@ def _safe_name(flight, index):
     return name
 
 
-def flight_to_unit(flight, default_dbid, min_alt_ft, max_alt_ft):
-    """Map an AeroAPI flight dict to a CMO unit dict, or None if unusable."""
+def flight_to_unit(flight, fallback_dbid, min_alt_ft, max_alt_ft, resolver=None):
+    """Map an AeroAPI flight dict to a CMO unit dict, or None if unusable.
+
+    DBID is resolved from the ICAO aircraft type via ``resolver`` (local DB,
+    no API cost); unmapped/unknown types use ``fallback_dbid``.
+    """
     pos = flight.get("last_position") or {}
     lat = pos.get("latitude")
     lon = pos.get("longitude")
@@ -74,25 +81,40 @@ def flight_to_unit(flight, default_dbid, min_alt_ft, max_alt_ft):
     origin = (flight.get("origin") or {}).get("code_icao") or (flight.get("origin") or {}).get("code") or "?"
     dest = (flight.get("destination") or {}).get("code_icao") or (flight.get("destination") or {}).get("code") or "?"
 
+    actype = flight.get("aircraft_type") or "UNKNOWN"
+    dbid = resolver.dbid(actype) if resolver else None
+    fell_back = dbid is None
+    if fell_back:
+        dbid = fallback_dbid
+    if resolver:
+        resolver.record(actype, dbid, fell_back)
+
+    # Air units require a LoadoutID; resolve a passenger loadout for the DBID.
+    loadout = resolver.loadout_for(dbid) if resolver else None
+    if not loadout:
+        loadout = DEFAULT_AIRLINER_LOADOUT
+
     return {
         "name": _safe_name(flight, 0),
-        "dbid": default_dbid,
+        "dbid": dbid,
+        "loadoutid": loadout,
+        "matched": not fell_back,
         "latitude": round(float(lat), 5),
         "longitude": round(float(lon), 5),
         "altitude_m": round(alt_ft * METERS_PER_FOOT, 1),
         "heading": int(pos.get("heading") or 0),
         "speed_kts": int(pos.get("groundspeed") or 0),
-        "aircraft_type": flight.get("aircraft_type") or "UNKNOWN",
+        "aircraft_type": actype,
         "route": f"{origin}->{dest}",
         "fa_flight_id": flight.get("fa_flight_id") or "",
     }
 
 
-def build_units(flights, default_dbid, min_alt_ft, max_alt_ft, max_flights):
+def build_units(flights, fallback_dbid, min_alt_ft, max_alt_ft, max_flights, resolver=None):
     units = []
     seen = set()
     for i, fl in enumerate(flights, 1):
-        u = flight_to_unit(fl, default_dbid, min_alt_ft, max_alt_ft)
+        u = flight_to_unit(fl, fallback_dbid, min_alt_ft, max_alt_ft, resolver)
         if not u:
             continue
         # De-duplicate names (CMO unit names should be unique).
@@ -117,17 +139,20 @@ def render_lua(units, side, posture, meta):
     a(f"-- Generated: {meta['generated']} | source: {meta['source']}")
     if meta.get("box"):
         a(f"-- Lat/long box (MINLAT MINLON MAXLAT MAXLON): {meta['box']}")
-    a(f"-- Flights rendered: {len(units)} | DBID stand-in: {meta['dbid']} (override with --dbid)")
+    matched = sum(1 for u in units if u.get("matched"))
+    a(f"-- Flights rendered: {len(units)} | type-matched to DB: {matched} | "
+      f"fallback DBID: {meta['dbid']} (override with --dbid)")
     a("-- Self-contained: only ScenEdit_* calls, no bootstrap/embed needed.")
     a("-- Altitudes converted from AeroAPI flight level (hundreds of ft) to metres.")
-    a("-- NOTE: a single civilian airframe DBID stands in for all traffic; edit per type if needed.")
+    a("-- DBID per flight is mapped from the ICAO aircraft type via the local CMO DB;")
+    a("-- unmapped/unknown types use the fallback airframe above.")
     a("")
     a(f"ScenEdit_AddSide({{side='{_lua_str(side)}'}})")
     a("")
-    a("local function add_traffic(unitname, dbid, lat, lon, alt_m, hdg, spd)")
+    a("local function add_traffic(unitname, dbid, loadoutid, lat, lon, alt_m, hdg, spd)")
     a("    local u = ScenEdit_AddUnit({")
     a(f"        type='Air', side='{_lua_str(side)}', unitname=unitname, dbid=dbid,")
-    a("        latitude=lat, longitude=lon, altitude=alt_m, heading=hdg,")
+    a("        loadoutid=loadoutid, latitude=lat, longitude=lon, altitude=alt_m, heading=hdg,")
     a("    })")
     a("    if not u or not u.guid then")
     a("        print('ERROR: kon vluchteenheid niet plaatsen: '..unitname)")
@@ -139,10 +164,11 @@ def render_lua(units, side, posture, meta):
     a("")
     for u in units:
         a(
-            "add_traffic('%s', %d, %s, %s, %s, %d, %d)  -- %s %s"
+            "add_traffic('%s', %d, %d, %s, %s, %s, %d, %d)  -- %s %s"
             % (
                 _lua_str(u["name"]),
                 u["dbid"],
+                u["loadoutid"],
                 u["latitude"],
                 u["longitude"],
                 u["altitude_m"],
@@ -168,8 +194,14 @@ def main(argv=None):
     src.add_argument("--from-json", help="Generate offline from a saved AeroAPI /flights/search response")
     parser.add_argument("--side", default="Civilian Air Traffic", help="CMO side name for the traffic")
     parser.add_argument("--posture", default="N", help="Side posture code (default N=Neutral)")
-    parser.add_argument("--dbid", type=int, default=DEFAULT_AIRLINER_DBID, help="Civilian airframe DBID")
-    parser.add_argument("--max-pages", type=int, default=2, help="AeroAPI pages to fetch")
+    parser.add_argument("--dbid", type=int, default=DEFAULT_AIRLINER_DBID,
+                        help="Fallback civilian airframe DBID for unmapped/unknown types")
+    parser.add_argument("--series", default="DB3K", help="CMO DB series for type mapping (default DB3K)")
+    parser.add_argument("--version", default="515", help="CMO DB version for type mapping (default 515)")
+    parser.add_argument("--no-db-types", action="store_true",
+                        help="Skip local-DB type mapping; use the fallback DBID for every flight")
+    parser.add_argument("--max-pages", type=int, default=2,
+                        help="AeroAPI pages to fetch (= billed /flights/search queries)")
     parser.add_argument("--max-flights", type=int, default=60, help="Cap rendered units")
     parser.add_argument("--min-alt-ft", type=float, default=None, help="Drop flights below this altitude (ft)")
     parser.add_argument("--max-alt-ft", type=float, default=None, help="Drop flights above this altitude (ft)")
@@ -222,7 +254,26 @@ def main(argv=None):
     if args.save_json:
         Path(args.save_json).write_text(json.dumps(flights, indent=2), encoding="utf-8")
 
-    units = build_units(flights, args.dbid, args.min_alt_ft, args.max_alt_ft, args.max_flights)
+    # ---- Type mapping (local DB only, no API cost) --------------------------
+    resolver = None
+    fallback_dbid = args.dbid
+    if not args.no_db_types:
+        resolver = TypeResolver(args.series, args.version)
+        if resolver.db_available:
+            # Resolve a version-correct fallback airframe so --dbid stays sane
+            # across DB versions; only keep the numeric default if lookup fails.
+            fb = resolver.dbid_by_name("Boeing 737-800")
+            if fb:
+                fallback_dbid = fb
+        else:
+            print(f"NOTE: local CMO DB unavailable ({resolver.db_error}); "
+                  f"using fallback DBID {fallback_dbid} for all flights.")
+
+    units = build_units(flights, fallback_dbid, args.min_alt_ft, args.max_alt_ft,
+                        args.max_flights, resolver)
+    if resolver:
+        print(resolver.summary_line())
+        resolver.close()
     if not units:
         print("WARNING: no usable flights with positions found; nothing generated.")
         return 0
@@ -231,7 +282,7 @@ def main(argv=None):
         "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
         "source": meta_source,
         "box": box,
-        "dbid": args.dbid,
+        "dbid": fallback_dbid,
     }
     lua = render_lua(units, args.side, args.posture, meta)
 

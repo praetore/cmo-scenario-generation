@@ -62,8 +62,21 @@ python scripts/flights_to_cmo.py --name nl_traffic --from-json sample.json
 
 Output `generated/<name>.lua` is **self-contained** (only `ScenEdit_*`, no
 bootstrap/embed): one neutral side, each flight an airborne `Air` unit at its
-last position/heading/speed. A single civilian airframe DBID (default `3970`,
-Boeing 737-800 in DB3K v515) stands in for all traffic; override with `--dbid`.
+last position/heading/speed.
+
+**Aircraft-type mapping (`scripts/aircraft_type_map.py`):** each flight's ICAO
+`aircraft_type` (e.g. `B738`, `E190`, `AT72`) is resolved to a real CMO
+`DataAircraft` DBID against the **local** source `.db3` (no API cost), preferring
+civilian operators. Because DBIDs are not stable across DB versions, mapping is
+done **by name at runtime** for `--series/--version` (default `DB3K 515`).
+Unmapped/unknown types (and anything absent from the DB — e.g. the A320 family,
+737 MAX, Dash 8 are not in DB3K v515) fall back to `--dbid` (default `3970`,
+Boeing 737-800). Use `--no-db-types` to force the fallback for every flight. The
+run prints a summary, e.g. `Type mapping: 9 matched, 21 fell back (types: …)`.
+
+**API cost:** the only billed calls are `/flights/search` pages — exactly
+`--max-pages` queries per run (default `2`, ~15 flights/page). Type mapping is
+purely local. Use `--from-json`/`--save-json` to iterate offline at zero cost.
 
 ## 2. Conventions & gotchas
 

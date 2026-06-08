@@ -1403,11 +1403,30 @@ def _validate_operator_country_oob(content, assignments, naval_units, db, series
                 f"OperatorCountry '{op_desc}' — use a DB entry operated by that side."
             )
             return
-        if "junkyard" in op_desc.lower():
-            warnings.append(
-                f"Operator country: '{label}' (ID {unit_id}) uses OperatorCountry '{op_desc}' "
-                f"— prefer a national US hull (e.g. DDG 51 ID 112) when possible."
-            )
+        if _is_placeholder_operator(op_desc):
+            if _spawn_has_operator_last_resort(content, label, unit_id):
+                ok.append(
+                    f"OK: Operator last resort — '{label}' (ID {unit_id}) uses '{op_desc}' "
+                    f"with documented @operator_last_resort."
+                )
+            else:
+                alts = _national_operator_alternatives(
+                    db, table, unit_id, series, version
+                )
+                if alts:
+                    warnings.append(
+                        f"Operator country: '{label}' (ID {unit_id}) uses placeholder "
+                        f"OperatorCountry '{op_desc}' but national/NATO variants exist: "
+                        f"{', '.join(alts)}. Prefer those; Junkyard/Generic only as last "
+                        f"resort (add -- @operator_last_resort if truly unavoidable)."
+                    )
+                else:
+                    warnings.append(
+                        f"Operator country: '{label}' (ID {unit_id}) uses placeholder "
+                        f"OperatorCountry '{op_desc}' — no national variant found in DB; "
+                        f"acceptable last resort. Document why in the scenario header and "
+                        f"add -- @operator_last_resort on the spawn line."
+                    )
         if not ok_logged:
             ok_logged = True
 
@@ -1427,6 +1446,231 @@ def _validate_operator_country_oob(content, assignments, naval_units, db, series
     if not errors and ok_logged:
         ok.append(
             "OK: OperatorCountry matches scenario side for placed naval units and spawned aircraft."
+        )
+    return errors, warnings, ok
+
+# Helper call -> DB table for declared-nationality lookups.
+_NATIONALITY_SPAWN_PATTERNS = (
+    # spawn_air_wing('side', 'prefix', count, dbid, ...)
+    (
+        "DataAircraft",
+        re.compile(
+            r"spawn_air_wing\s*\(\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*\d+\s*,\s*(\d+)",
+            re.IGNORECASE,
+        ),
+    ),
+    # add_air_unit_checked('side', 'name', dbid, ...)
+    (
+        "DataAircraft",
+        re.compile(
+            r"add_air_unit_checked\s*\(\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*(\d+)",
+            re.IGNORECASE,
+        ),
+    ),
+    # place_ship('side', 'name', dbid, ...)
+    (
+        "DataShip",
+        re.compile(
+            r"place_ship\s*\(\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*(\d+)", re.IGNORECASE
+        ),
+    ),
+    # place_sub('side', 'name', dbid, ...)
+    (
+        "DataSubmarine",
+        re.compile(
+            r"place_sub\s*\(\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*(\d+)", re.IGNORECASE
+        ),
+    ),
+    # place_sam('side', 'name', dbid, ...)
+    (
+        "DataFacility",
+        re.compile(
+            r"place_sam\s*\(\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*(\d+)", re.IGNORECASE
+        ),
+    ),
+)
+
+_NATIONALITY_ANNOTATION_RE = re.compile(
+    r"--\s*@nationality\s+([^\n]+?)\s*$", re.IGNORECASE
+)
+_OPERATOR_LAST_RESORT_RE = re.compile(
+    r"--\s*@operator_last_resort\b", re.IGNORECASE
+)
+
+
+def _line_has_operator_last_resort(lines, idx):
+    if _OPERATOR_LAST_RESORT_RE.search(lines[idx]):
+        return True
+    if idx > 0 and lines[idx - 1].strip().startswith("--"):
+        return bool(_OPERATOR_LAST_RESORT_RE.search(lines[idx - 1]))
+    return False
+
+
+def _spawn_has_operator_last_resort(content, label, unit_id):
+    """True when the place/spawn line for this dbid carries @operator_last_resort."""
+    patterns = [
+        rf"place_(?:ship|sub|sam)\s*\([^)]*'{re.escape(label)}'[^)]*,\s*{unit_id}\b",
+        rf"add_air_unit_checked\s*\([^)]*'{re.escape(label)}'[^)]*,\s*{unit_id}\b",
+        rf"spawn_air_wing\s*\([^)]*,\s*{unit_id}\s*,",
+    ]
+    lines = content.splitlines()
+    for idx, line in enumerate(lines):
+        if not any(re.search(p, line, re.IGNORECASE) for p in patterns):
+            continue
+        if _line_has_operator_last_resort(lines, idx):
+            return True
+    return False
+
+
+def _parse_declared_nationalities(content):
+    """
+    Find spawn/place calls carrying an inline `-- @nationality <Country>` annotation.
+
+    Returns list of (table, dbid, label, declared_nationality, line_no). The annotation
+    may sit on the same line as the call or on the line directly above it.
+    """
+    lines = content.splitlines()
+    # Pre-compute the declared nationality attached to each line (same line wins,
+    # otherwise inherit from the immediately preceding comment-only line).
+    decl_on_line = [None] * len(lines)
+    for idx, line in enumerate(lines):
+        m = _NATIONALITY_ANNOTATION_RE.search(line)
+        if m:
+            decl_on_line[idx] = m.group(1).strip()
+
+    results = []
+    for idx, line in enumerate(lines):
+        for table, pattern in _NATIONALITY_SPAWN_PATTERNS:
+            m = pattern.search(line)
+            if not m:
+                continue
+            label = m.group(1)
+            dbid = int(m.group(2))
+            declared = decl_on_line[idx]
+            if declared is None and idx > 0:
+                prev = lines[idx - 1].strip()
+                if prev.startswith("--") and decl_on_line[idx - 1]:
+                    declared = decl_on_line[idx - 1]
+            if declared:
+                results.append((table, dbid, label, declared, idx + 1))
+    return results
+
+
+def _validate_declared_nationality(content, db, series, version):
+    """
+    Cross-check inline `-- @nationality <Country>` annotations against the DB
+    OperatorCountry of each spawned/placed unit. Catches e.g. a Norwegian hull
+    labelled as Dutch on a coalition side (where the side name cannot enforce it).
+    """
+    errors = []
+    warnings = []
+    ok = []
+
+    declared_units = _parse_declared_nationalities(content)
+    if not declared_units:
+        warnings.append(
+            "Nationality: no '-- @nationality <Country>' annotations found — add them on "
+            "spawn_air_wing/add_air_unit_checked/place_ship/place_sub/place_sam lines so "
+            "preflight can verify each hull's DB OperatorCountry (coalition sides cannot)."
+        )
+        return errors, warnings, ok
+
+    checked = 0
+    for table, dbid, label, declared, line_no in declared_units:
+        _op_id, op_desc = _unit_operator_description(db, table, dbid, series, version)
+        if not op_desc:
+            warnings.append(
+                f"Nationality: no OperatorCountry in DB for {label} (ID {dbid}, {table}, "
+                f"line {line_no}) — cannot verify declared '{declared}'."
+            )
+            continue
+        checked += 1
+        if not _operator_desc_matches_nationality(declared, op_desc):
+            if _is_placeholder_operator(op_desc):
+                alts = [
+                    a for a in _national_operator_alternatives(db, table, dbid, series, version)
+                    if declared.lower() in a.lower()
+                    or _normalize_nationality(declared) in _normalize_nationality(a).lower()
+                ]
+                alt_hint = f" Prefer: {', '.join(alts)}." if alts else ""
+                warnings.append(
+                    f"Nationality: {label} (ID {dbid}, line {line_no}) is Junkyard/Generic "
+                    f"— cannot verify '@nationality {declared}'.{alt_hint} Use a national "
+                    f"DBID when available; else @operator_last_resort."
+                )
+            else:
+                errors.append(
+                    f"Nationality mismatch: {label} (ID {dbid}, {table}, line {line_no}) is "
+                    f"operated by '{op_desc}' in the DB but declared '@nationality {declared}'. "
+                    f"Pick a DB entry operated by {declared}, or correct the annotation."
+                )
+    if checked and not any(e.startswith("Nationality mismatch") for e in errors):
+        ok.append(
+            f"OK: Nationality — {checked} annotated unit(s) match their DB OperatorCountry."
+        )
+    return errors, warnings, ok
+
+
+_CIV_SIDE_RE = re.compile(
+    r"ScenEdit_AddSide\s*\(\s*\{[^}]*?side\s*=\s*'([^']*)'", re.IGNORECASE
+)
+_ADDUNIT_BLOCK_RE = re.compile(
+    r"ScenEdit_AddUnit\s*\(\s*\{(.*?)\}\s*\)", re.IGNORECASE | re.DOTALL
+)
+
+
+def _validate_civilian_flight_paths(content):
+    """
+    Civilian air traffic must have realistic flight paths (logic_checks §11): a plotted
+    `course` that exits the area (transit, majority) or `base`+`rtb` to land (small minority).
+    Civilian air added with only heading/speed loiters/circles aimlessly — flag it.
+    """
+    errors = []
+    warnings = []
+    ok = []
+
+    civ_sides = {
+        s for s in _CIV_SIDE_RE.findall(content) if "civ" in s.lower()
+    }
+    if not civ_sides:
+        return errors, warnings, ok
+
+    def block_is_civ_air(block):
+        has_air = re.search(r"type\s*=\s*'Air'", block, re.IGNORECASE)
+        if not has_air:
+            return False
+        return any(
+            re.search(r"side\s*=\s*'" + re.escape(side) + r"'", block, re.IGNORECASE)
+            for side in civ_sides
+        )
+
+    has_civ_air = any(
+        block_is_civ_air(m.group(1)) for m in _ADDUNIT_BLOCK_RE.finditer(content)
+    )
+    if not has_civ_air:
+        return errors, warnings, ok
+
+    has_course = re.search(r"\bcourse\s*=", content) is not None
+    has_landing = re.search(r"\brtb\s*=\s*true\b", content, re.IGNORECASE) is not None
+
+    if not has_course and not has_landing:
+        warnings.append(
+            "Civilian flight paths: civilian air traffic has no plotted 'course' and no "
+            "'base'+'rtb' — aircraft fly straight, then loiter/circle aimlessly. Give transit "
+            "flights a course (final waypoint outside the area) and land only a small portion "
+            "(base+rtb to a same-side civilian airfield). See logic_checks_cmo.md §11."
+        )
+        return errors, warnings, ok
+
+    ok.append(
+        "OK: Civilian flight paths — plotted course and/or RTB landing present "
+        "(no aimless-loiter antipattern)."
+    )
+    if has_landing and not has_course:
+        warnings.append(
+            "Civilian flight paths: RTB/landing present but no plotted transit 'course' — most "
+            "civilian flights should be overflights that exit the area; only a small portion "
+            "should land (logic_checks_cmo.md §11)."
         )
     return errors, warnings, ok
 

@@ -49,12 +49,14 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
   - **Check:** `scripts/db_search.py --weapons [ID] --type DataFacility`
   - **Empty units:** No mounts/magazines in search → unit cannot fire in-game; pick another DBID (e.g. battery/section instead of generic “SAM site”).
   - **Operator country:** Each unit has `OperatorCountry`. Preflight fails if `place_ship` / `place_sub` / `spawn_air_wing` uses an operator that does not match the Lua `side` (e.g. a Soviet-operated hull placed on a NATO side).
+  - **Junkyard/Generic — last resort:** The DB lists duplicate units under **Junkyard** (9999) or **Generic** — same name, no nation. After `db_search.py "<name>"`, **first** pick a row whose **Operator** column shows a real country or **NATO** (2060). Use Junkyard/Generic only when no national variant fits; add `-- @operator_last_resort` and explain in the OOB header. Preflight **warns** (stronger if alternatives exist).
   - **Pitfall:** “F-35A Lightning II” may map to multiple DBIDs per country — wrong ID → wrong loadouts, sensors, or markings.
 - **Loadout / weapon config:**
   - **Aircraft:** `LoadoutID` is tied to `AircraftID`. Always confirm with `--loadouts` or `DataAircraftLoadouts`.
   - **Non-air:** Use `--loadouts --type [Type]` for mounts + magazines.
   - **Search:** `python scripts/db_search.py "UnitName"` and check the `Op` column.
-  - **Known operator IDs:** `2061` Netherlands, `2011` Belgium, `2101` United States, `2032` France, `2035` Germany, `2006` Australia.
+  - **Known operator IDs:** `2060` NATO, `2061` Netherlands, `2011` Belgium, `2101` United States, `2032` France, `2035` Germany, `2074` Poland, `2079` Russia, `2006` Australia. **Last resort:** `9999` Junkyard, Generic — only when no national row exists; tag with `@operator_last_resort`.
+  - **DB lookup workflow:** `python scripts/db_search.py "E-3" --series DB3K --version 515` → read **Operator** (id + name), not just unit name; same name often has 5+ DBIDs. Match operator to scenario intent (`@nationality` / side) before writing the dbid into Lua.
 - **Preflight (mandatory):**
 
   ```bash

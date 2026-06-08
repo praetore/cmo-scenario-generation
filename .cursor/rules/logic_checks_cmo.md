@@ -167,6 +167,11 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
 - **Collateral Damage**: Hitting civilians can cost points or escalate the scenario.
   - *Check*: Is civil shipping or air traffic present to complicate target identification?
 - **Identification**: Ensure neutral units are not marked hostile by mistake (WCS Tight/Hold).
+- **Realistic flight paths (no aimless loiter) — mandatory**: A civilian air unit created with only `heading`/`speed` and **no plotted course** flies straight and then loiters/circles aimlessly at the last point — unrealistic and a distraction. Every civilian-side air unit must be one of:
+  - *Transit (majority)*: a plotted `course` — a table of `{latitude=, longitude=}` waypoints set via `ScenEdit_SetUnit({guid=…, course={…}})` — whose **final waypoint lies outside the scenario area**, so the aircraft flies through and exits cleanly instead of circling.
+  - *Landing (small minority)*: assigned a **same-side** civilian airfield (`base = <airport guid>`) with `rtb = true`, so CMO flies the approach and lands. RTB requires the airfield to be on the **same side** as the airliner — add 1–2 civilian airfields for the landers.
+  - *Check (proportion)*: Only a **small portion** of civilian flights should land inside the scenario area; **most** are overflights that exit. Do not make all (or nearly all) civilian flights land.
+  - *Preflight*: `scripts/db_search.py --validate-scenario` warns when a civilian side has air traffic but **no** plotted `course` and **no** `base`+`rtb` (aimless-loiter antipattern), and when civilian airfields are present but no flight is set to transit through.
 
 ## 12. Terrain & Environment (Land Operations)
 - **Line of Sight (LOS)**: Mountains and buildings block land radars and weapons.
@@ -196,6 +201,10 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - **Role fit**: carrier-capable variants, CSG composition, SEAD=Patrol, tanker for long-range strike — by **category/name**, not a single national inventory.
 - **What it does not do**: no requirement for "at least 4× stealth" or "Super Hornet only"; it does not replace scenario design. Deliberate obsolete opponents (MiG-21, SA-2) in 2026 are allowed — expect decommission warnings unless explained in comments.
 - **Workflow**: year → DB series (§16) → search suitable units → precision/standoff loadouts for that year → preflight.
+- **Nationality / OperatorCountry (per hull) — mandatory**: The DB `OperatorCountry` of each spawned/placed unit must match its intended nationality. A **coalition side name** (e.g. `NATO Air Defense`, which hosts Polish, Dutch, German and US hulls) **cannot** enforce this — the side-level operator check passes anything. Declare intent explicitly with an inline `-- @nationality <Country>` annotation on each `spawn_air_wing` / `add_air_unit_checked` / `place_ship` / `place_sub` / `place_sam` line (on the same line or the line directly above the call).
+  - *Preflight*: `--validate-scenario` resolves the DB `OperatorCountry` for the dbid and **errors** on mismatch. `NATO` operator matches `@nationality NATO` only; **Junkyard/Generic do not prove** a declared `@nationality` (warning). Bracketed forms (`Russia [1992-]`, `Germany [FRG/Reunified]`) and common aliases (dutch→Netherlands, polish→Poland, usa→United States, …) are normalized.
+  - *Pitfall*: same airframe name, different national DBID — e.g. F-35A id **3326** is **Norwegian**, id **3902** is **Dutch**; a Polish "F-16C" labelled with a US-operated dbid is also wrong. Always confirm the operator before delivery (`db_search.py "<unit>"` → **Operator** column shows id + country name).
+  - *Junkyard/Generic — last resort only*: CMO duplicates many units under `OperatorCountry` **Junkyard** (id **9999**) or **Generic** — same `Name`, no real nation. **Prefer** a national or NATO-operated DBID whenever one exists (e.g. E-3C **304** = Junkyard → use **3186** NATO, **209** US, or **97** UK). Use Junkyard/Generic **only when no suitable national variant exists** in the DB for that role; document why in the scenario header and add `-- @operator_last_resort` on the spawn line. Preflight **warns** on Junkyard/Generic (stronger warning when national alternatives exist); wrong-nationality mismatches remain **errors**, Junkyard+`@nationality` mismatch is a **warning**.
 
 ## 16. Database Series Mapping (DB3K vs CWDB)
 - **Hard year rule**:

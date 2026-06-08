@@ -940,7 +940,13 @@ def _unit_service_record(db, table, unit_id, series, version):
     return name, commissioned, decommissioned, name
 
 def _unit_operator_description(db, table, unit_id, series, version):
-    if table not in ("DataAircraft", "DataShip", "DataSubmarine"):
+    if table not in (
+        "DataAircraft",
+        "DataShip",
+        "DataSubmarine",
+        "DataFacility",
+        "DataGroundUnit",
+    ):
         return None, ""
     query = f"SELECT OperatorCountry FROM {table} WHERE ID = ?"
     params = [unit_id]
@@ -953,13 +959,56 @@ def _unit_operator_description(db, table, unit_id, series, version):
     op_row = db.cursor.execute(op_query, [op_id]).fetchone()
     return op_id, (op_row[0] if op_row else "")
 
+
+def _is_placeholder_operator(op_desc):
+    """True for CMO Junkyard / Generic DB placeholders (last-resort operators only)."""
+    op_l = (op_desc or "").strip().lower()
+    return op_l in ("junkyard", "generic") or "junkyard" in op_l
+
+
+def _unit_db_name(db, table, unit_id, series, version):
+    query = f"SELECT Name FROM {table} WHERE ID = ?"
+    params = [unit_id]
+    query, params = db.append_meta_filters(query, params)
+    row = db.cursor.execute(query, params).fetchone()
+    return (row[0] or "").strip() if row else ""
+
+
+def _national_operator_alternatives(db, table, unit_id, series, version, limit=5):
+    """
+    Other DB entries with the same unit Name but a real (non-placeholder) operator.
+    Used to warn when Junkyard/Generic was chosen while national variants exist.
+    """
+    if table not in ("DataAircraft", "DataShip", "DataSubmarine", "DataFacility", "DataGroundUnit"):
+        return []
+    name = _unit_db_name(db, table, unit_id, series, version)
+    if not name:
+        return []
+    query = f"SELECT ID, OperatorCountry FROM {table} WHERE Name = ? AND ID != ?"
+    params = [name, unit_id]
+    query, params = db.append_meta_filters(query, params)
+    rows = db.cursor.execute(query, params).fetchall()
+    alts = []
+    for alt_id, op_id in rows:
+        if op_id in (None, ""):
+            continue
+        _oid, op_desc = _unit_operator_description(db, table, int(alt_id), series, version)
+        if not op_desc or _is_placeholder_operator(op_desc):
+            continue
+        short = op_desc.split("[")[0].strip()
+        alts.append(f"ID {alt_id} ({short})")
+        if len(alts) >= limit:
+            break
+    return alts
+
+
 def _side_matches_operator_country(side, operator_desc):
     """True when scenario side plausibly matches DB OperatorCountry description."""
     if not operator_desc:
         return True
     side_l = (side or "").strip().lower()
     op_l = operator_desc.lower()
-    if "junkyard" in op_l or op_l == "generic":
+    if _is_placeholder_operator(operator_desc):
         return True
     if side_l == "cuba":
         return "cuba" in op_l
@@ -975,6 +1024,68 @@ def _side_matches_operator_country(side, operator_desc):
     if side_l in ("warsaw pact", "soviet union", "ussr"):
         return "soviet" in op_l or "russia" in op_l
     return True
+
+_NATIONALITY_ALIASES = {
+    "usa": "united states",
+    "us": "united states",
+    "u.s.": "united states",
+    "america": "united states",
+    "uk": "united kingdom",
+    "britain": "united kingdom",
+    "great britain": "united kingdom",
+    "holland": "netherlands",
+    "dutch": "netherlands",
+    "nl": "netherlands",
+    "polish": "poland",
+    "pl": "poland",
+    "german": "germany",
+    "frg": "germany",
+    "deutschland": "germany",
+    "russian": "russia",
+    "rf": "russia",
+    "ussr": "soviet union",
+    "soviet": "soviet union",
+    "french": "france",
+    "italian": "italy",
+    "norwegian": "norway",
+    "belgian": "belgium",
+    "danish": "denmark",
+    "turkish": "turkey",
+    "spanish": "spain",
+    "canadian": "canada",
+    "australian": "australia",
+    "japanese": "japan",
+    "czech": "czech republic",
+}
+
+
+def _normalize_nationality(text):
+    """Lowercase, drop bracketed/parenthetical qualifiers, resolve common aliases."""
+    if not text:
+        return ""
+    t = re.sub(r"[\[(].*?[\])]", "", text)  # strip "[1992-]", "[FRG/Reunified]", "(...)"
+    t = t.strip().lower()
+    t = re.sub(r"\s+", " ", t)
+    return _NATIONALITY_ALIASES.get(t, t)
+
+
+def _operator_desc_matches_nationality(declared, operator_desc):
+    """True when a declared nationality plausibly matches a DB OperatorCountry description."""
+    decl = _normalize_nationality(declared)
+    op = _normalize_nationality(operator_desc)
+    if not decl or not op:
+        return False
+    if decl == op:
+        return True
+    # Junkyard/Generic do not prove the declared nationality — last resort only.
+    if _is_placeholder_operator(operator_desc):
+        return False
+    # NATO operator (e.g. E-3A Component) matches @nationality NATO only.
+    if op == "nato" or "nato" in op:
+        return decl == "nato"
+    # Substring either direction (e.g. "korea" vs "south korea").
+    return decl in op or op in decl
+
 
 def _loadout_name_upper(db, loadout_id, series, version):
     query = "SELECT Name FROM DataLoadout WHERE ID = ?"

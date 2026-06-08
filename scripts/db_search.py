@@ -429,6 +429,18 @@ def validate_scenario_air_loadouts(
     warnings.extend(op_warnings)
     ok.extend(op_ok)
 
+    nat_errors, nat_warnings, nat_ok = _validate_declared_nationality(
+        content, db, series, version
+    )
+    errors.extend(nat_errors)
+    warnings.extend(nat_warnings)
+    ok.extend(nat_ok)
+
+    civ_errors, civ_warnings, civ_ok = _validate_civilian_flight_paths(content)
+    errors.extend(civ_errors)
+    warnings.extend(civ_warnings)
+    ok.extend(civ_ok)
+
     host_errors, host_warnings, host_ok = _validate_air_host_capacity(
         content, db, ships, series, version
     )
@@ -686,8 +698,32 @@ def main():
         print(f"No results found for '{args.term}'")
         return
 
-    print(f"{'ID':<10} | {'Type':<15} | {'Series':<6} | {'Ver':<5} | {'Op':<5} | {'Cat/RW':<10} | {'Name'}")
-    print("-" * 110)
+    op_cache = {}
+
+    def _operator_label(op_id, cursor):
+        if op_id in op_cache:
+            return op_cache[op_id]
+        row = cursor.execute(
+            "SELECT Description FROM EnumOperatorCountry WHERE ID = ?", [op_id]
+        ).fetchone()
+        desc = (row[0] if row else "?").split("[")[0].strip()
+        op_cache[op_id] = f"{op_id} {desc}"
+        return op_cache[op_id]
+
+    db = open_db(
+        db_path=db_kwargs.get("db_path"),
+        series=args.series,
+        version=args.version,
+        prefer_source=db_kwargs.get("prefer_source", True),
+        force_master=db_kwargs.get("force_master", False),
+    )
+    cursor = db.cursor
+
+    print(
+        f"{'ID':<10} | {'Type':<15} | {'Series':<6} | {'Ver':<5} | {'Operator':<22} | "
+        f"{'Cat/RW':<10} | {'Name'}"
+    )
+    print("-" * 120)
     for res in results:
         id_val, name, series, version, operator, cat, rw, type_val = res
         extra = ""
@@ -701,8 +737,10 @@ def main():
                 extra += " (STOVL)"
 
         print(
-            f"{id_val:<10} | {type_val:<15} | {series:<6} | {version:<5} | {operator:<5} | {extra:<10} | {name}"
+            f"{id_val:<10} | {type_val:<15} | {series:<6} | {version:<5} | "
+            f"{_operator_label(operator, cursor):<22} | {extra:<10} | {name}"
         )
+    db.close()
 
 if __name__ == "__main__":
     main()
