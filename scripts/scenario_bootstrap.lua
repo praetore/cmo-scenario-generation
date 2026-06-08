@@ -98,7 +98,7 @@
 --     weapon_name_is_nuclear(name)  fallback when dbid unknown at runtime
 --     conventional_tlam_dbid()  strip_nuclear_from_unit(unit)  after place_ship on CSG
 --
--- RECIPE — CSG + solo TLAM (reference: generated/cuba_pressure_2026.lua)
+-- RECIPE — CSG + solo TLAM (worked example: skills_cmo.md §9; scenarios live in generated/ and are gitignored)
 --   1. Two Strike missions: air strike + naval TLAM (both type Land, OnDeactivateUassign=false)
 --   2. form_csg_group(CSG_GROUP, cvn, {ddg1, ddg2}) — **no CG**; spawn CG before grouping (never add to CSG group)
 --   3. Optional: assign_csg_group_missions(..., patrol on CVN lead only) — omit CSG Station Keeping if CG ME conflict
@@ -116,7 +116,7 @@
 --   NOTE:    expected quirk at import (e.g. solo CG + empty GetMission until Play)
 --   OK:      verified success, or deferred success with explanation
 --   Helpers emit NOTE/OK for empty TLAM schedule after solo assign; scenarios should
---   end with a Strike TOT summary line when tot=='' (see cuba_pressure_2026.lua).
+--   end with a Strike TOT summary line when tot=='' (see skills_cmo.md §6).
 --
 -- PITFALLS
 --   • AssignUnitToMission / SetUnit(mission=): use mission **name**, not guid — guid attempts log

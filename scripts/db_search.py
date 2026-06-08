@@ -88,17 +88,26 @@ def _run_luacheck(scenario_path):
             ]
         return {"errors": [], "warnings": warnings, "ok": []}
 
+    # luacheck 1.x does not expand '*' in --globals (a name like 'ScenEdit_*' is
+    # taken literally), so the CMO API was never actually whitelisted. Use
+    # --ignore <code>/<var-pattern> (Lua patterns) for the API prefixes instead,
+    # and whitelist the single 'cmo' bootstrap global by exact name. The trailing
+    # '--' is required: without it the --globals/--ignore list swallows the file
+    # path, leaving luacheck with no file to check (critical exit, reported as a
+    # bogus "luacheck failed with errors").
     cmd = [
         luacheck_bin,
         "--codes",
         "--ranges",
         "--no-color",
         "--globals",
-        "ScenEdit_*",
-        "VP_*",
-        "World_*",
-        "Tool_*",
         "cmo",
+        "--ignore",
+        "113/ScenEdit_.*",
+        "113/VP_.*",
+        "113/World_.*",
+        "113/Tool_.*",
+        "--",
         scenario_path,
     ]
     try:
@@ -400,6 +409,11 @@ def validate_scenario_air_loadouts(
 
     scenario_year = _parse_scenario_year(content)
     ships = _parse_naval_placements(content)
+
+    water_errors, water_warnings, water_ok = _validate_ship_sub_water_placement(ships)
+    errors.extend(water_errors)
+    warnings.extend(water_warnings)
+    ok.extend(water_ok)
 
     patrol_errors, patrol_warnings, patrol_ok = _validate_patrol_zone_proximity(
         content, mission_map, ships

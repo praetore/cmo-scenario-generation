@@ -10,7 +10,7 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
 
 - **`.cursor/rules/cmo_api_reference.md`** — **Required** technical reference. Current functions, wrappers, and data types. If a function is not listed here, treat it as deprecated and do not use it.
 - **`.cursor/rules/logic_checks_cmo.md`** — Conceptual “rules of the game.” Use for scenario logic validation (fuel, sensors, doctrine, CSG, strike timing) instead of guessing from the PDF manual.
-- **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). Full API reference in the file header (lines 1–100). Example scenario: `generated/cuba_pressure_2026.lua`.
+- **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). Full API reference in the file header (lines 1–100). Generated scenarios live in `generated/` (gitignored locally).
 
 ## 2. Essential Lua API rules (CMO-specific)
 
@@ -48,7 +48,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 - **Weapon verification:** SAM and some facilities may have empty or wrong DBIDs in merged DBs.
   - **Check:** `scripts/db_search.py --weapons [ID] --type DataFacility`
   - **Empty units:** No mounts/magazines in search → unit cannot fire in-game; pick another DBID (e.g. battery/section instead of generic “SAM site”).
-  - **Operator country:** Each unit has `OperatorCountry`. Preflight fails if `place_ship` / `place_sub` / `spawn_air_wing` uses an operator that does not match the Lua `side` (e.g. Soviet Osa on side `Cuba`).
+  - **Operator country:** Each unit has `OperatorCountry`. Preflight fails if `place_ship` / `place_sub` / `spawn_air_wing` uses an operator that does not match the Lua `side` (e.g. a Soviet-operated hull placed on a NATO side).
   - **Pitfall:** “F-35A Lightning II” may map to multiple DBIDs per country — wrong ID → wrong loadouts, sensors, or markings.
 - **Loadout / weapon config:**
   - **Aircraft:** `LoadoutID` is tied to `AircraftID`. Always confirm with `--loadouts` or `DataAircraftLoadouts`.
@@ -185,7 +185,7 @@ Do **not** copy the full bootstrap into Markdown — that drifts from preflight.
 2. Preflight: `python scripts/db_search.py --validate-scenario generated/<name>.lua --series DB3K --version 515`
 3. Import: `python scripts/embed_bootstrap.py generated/<name>.lua` → load `generated/<name>_import.lua` in CMO.
 
-Reference implementation: **`generated/cuba_pressure_2026.lua`**.
+Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
 ### Scenario skeleton
 

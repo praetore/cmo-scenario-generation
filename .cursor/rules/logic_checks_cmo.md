@@ -113,7 +113,7 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - *Check*: Submarines not too shallow (grounding) and not too deep for the DB unit; see also §6 bathymetry.
 - **Facilities (airfields, SAM)**: Usually on **land**; not in open ocean unless the DB unit is a maritime facility (port/platform).
   - *Check*: See `.cursor/rules/skills_cmo.md` — land-based facilities in water often yield `Placement aborted`.
-- **Preflight tooling**: `scripts/db_search.py --validate-scenario` does **not** check geo/elevation; placement checks remain manual or via Lua `World_GetElevation` at script load.
+- **Preflight tooling**: `scripts/db_search.py --validate-scenario` now runs a **land/water check** for every `place_ship` / `place_sub` via the `global_land_mask` package (NOAA-derived ~1 km land/ocean mask). A naval unit whose coordinates fall on land **fails** with `Ship/sub placement over land: …` before CMO import. Install with `pip install -r requirements.txt`; if the package is missing the check degrades to a warning and is skipped. This does **not** replace the in-Lua `World_GetElevation` guard at script load (finer resolution, also handles depth/bathymetry and seabed grounding) — near-coast placements within the mask resolution can still need a manual elevation check.
 
 ## 6. Landing Facilities & Bases
 - **Runway & Pad Compatibility**: Not every aircraft can land on every runway.
@@ -132,7 +132,7 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
 - **Engagement Range**: Weapons have minimum and maximum range.
   - *Check*: Is the target within the effective envelope of the chosen armament?
 - **TLAM shooter main gun (naval strike CG)**:
-  - *Check (land — mandatory)*: Main gun WRA **none** on all land target types — Tomahawk handles the strike; Mk45 must not engage Cuba ashore when missiles run out.
+  - *Check (land — mandatory)*: Main gun WRA **none** on all land target types — Tomahawk handles the strike; Mk45 must not engage land targets ashore when missiles run out.
   - *Check (surface — mandatory)*: WCS **HOLD** on surface (`weapon_control_status_surface=0`); gun WRA offensive range **none**, self-defence range **max** — may fire on threatening surface contacts, must not hunt.
   - *Check (hunting — mandatory)*: `engage_opportunity_targets=false`, mission `ShotgunBVR` — no opportunistic surface/land gun engagements outside the TLAM salvo.
 

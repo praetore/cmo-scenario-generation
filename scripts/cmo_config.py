@@ -49,6 +49,80 @@ def resolve_db_dir(explicit=None):
     return LOCAL_DB_DIR.resolve()
 
 
+def resolve_aeroapi_key(explicit=None):
+    """
+    FlightAware AeroAPI key for the x-apikey header.
+
+    Priority: explicit argument > AEROAPI_API_KEY env > cmo_config.ini [aeroapi] api_key.
+    Returns None when no key is configured (callers should skip AeroAPI features).
+    """
+    if explicit:
+        return explicit.strip()
+
+    env_key = os.environ.get("AEROAPI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    if not CONFIG_FILE.is_file():
+        return None
+    parser = configparser.ConfigParser()
+    parser.read(CONFIG_FILE, encoding="utf-8")
+    if "aeroapi" not in parser:
+        return None
+    key = parser["aeroapi"].get("api_key", "").strip()
+    # Treat the documented placeholder as "not configured".
+    if not key or key.upper() == "YOUR_AEROAPI_KEY_HERE":
+        return None
+    return key
+
+
+def aeroapi_config():
+    """Return the raw ``[aeroapi]`` section as a dict (empty if absent)."""
+    if not CONFIG_FILE.is_file():
+        return {}
+    parser = configparser.ConfigParser()
+    parser.read(CONFIG_FILE, encoding="utf-8")
+    if "aeroapi" not in parser:
+        return {}
+    return dict(parser["aeroapi"])
+
+
+def resolve_aeroapi_verify_ssl(explicit=None):
+    """TLS verification toggle. Default True; honor env + config opt-out.
+
+    Useful behind corporate TLS interception (self-signed CA in chain).
+    Prefer setting ``ca_bundle`` over disabling verification.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    env = os.environ.get("AEROAPI_VERIFY_SSL")
+    if env is not None:
+        return env.strip().lower() not in ("0", "false", "no", "off")
+    cfg = aeroapi_config().get("verify_ssl")
+    if cfg is not None:
+        return cfg.strip().lower() not in ("0", "false", "no", "off")
+    return True
+
+
+def resolve_aeroapi_ca_bundle(explicit=None):
+    """Path to a CA bundle (PEM) for TLS verification, or None."""
+    if explicit:
+        return explicit
+    env = os.environ.get("AEROAPI_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    if env:
+        return env
+    cfg = aeroapi_config().get("ca_bundle")
+    return cfg or None
+
+
+def aeroapi_key_source_label():
+    if os.environ.get("AEROAPI_API_KEY"):
+        return "AEROAPI_API_KEY environment variable"
+    if CONFIG_FILE.is_file():
+        return f"cmo_config.ini [aeroapi] ({CONFIG_FILE})"
+    return "not configured"
+
+
 def config_source_label():
     if CONFIG_FILE.is_file():
         return f"cmo_config.ini ({CONFIG_FILE})"

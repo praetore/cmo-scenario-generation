@@ -2776,6 +2776,73 @@ def _validate_bomber_and_sead_escort_packages(db, assignments, mission_map, seri
     return errors, warnings
 
 
+def _validate_ship_sub_water_placement(ships):
+    """Ships and submarines must sit over water; CMO rejects naval units on land.
+
+    Uses the optional ``global_land_mask`` package (NOAA-derived ~1 km land/ocean
+    mask) to flag ``place_ship`` / ``place_sub`` coordinates that fall on land. This
+    is the preflight counterpart to the in-Lua ``World_GetElevation`` guard in
+    ``scenario_bootstrap.lua``; it catches the common "cannot place ship over land"
+    failure before the script is ever loaded in CMO.
+
+    When the package is not installed the check degrades to a single warning so the
+    rest of preflight still runs.
+    """
+    errors = []
+    warnings = []
+    ok = []
+    if not ships:
+        return errors, warnings, ok
+
+    try:
+        from global_land_mask import globe
+    except ImportError:
+        warnings.append(
+            "Ship/sub water placement: global_land_mask not installed — land/water check "
+            "skipped. Run 'pip install global-land-mask' (see requirements.txt) so preflight "
+            "can catch ships/subs placed on land before CMO import."
+        )
+        return errors, warnings, ok
+
+    checked = 0
+    for unit in ships:
+        lat = unit.get("lat")
+        lon = unit.get("lon")
+        if lat is None or lon is None:
+            continue
+        kind = "submarine" if unit.get("kind") == "sub" else "ship"
+        label = unit.get("name") or f"DBID {unit.get('dbid')}"
+        side = unit.get("side") or "?"
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+            warnings.append(
+                f"Ship/sub water placement: {kind} '{label}' (side {side}) has out-of-range "
+                f"coordinates lat={lat}, lon={lon} — skipped."
+            )
+            continue
+        checked += 1
+        try:
+            is_land = bool(globe.is_land(lat, lon))
+        except Exception as exc:  # pragma: no cover - defensive
+            warnings.append(
+                f"Ship/sub water placement: could not evaluate {kind} '{label}' "
+                f"(lat={lat}, lon={lon}): {exc}"
+            )
+            continue
+        if is_land:
+            errors.append(
+                f"Ship/sub placement over land: {kind} '{label}' (side {side}) at "
+                f"lat={lat}, lon={lon} is on land per global_land_mask — CMO will reject it "
+                f"('cannot place ship over land'). Move to open water (elevation <= 0)."
+            )
+
+    if checked and not errors:
+        ok.append(
+            f"OK: Ship/sub water placement — {checked} naval unit(s) over water "
+            f"(global_land_mask)."
+        )
+    return errors, warnings, ok
+
+
 __all__ = sorted(
     name
     for name, value in globals().items()
