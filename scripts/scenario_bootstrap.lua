@@ -168,6 +168,22 @@ function M.mission_schedule_datetime(date_slash, time_hms)
     return M.mission_schedule_date(date_slash) .. ' ' .. time_hms
 end
 
+-- scenario_date 'YYYY/MM/DD' → ScenEdit_SetTime (dateformat YYYYMMDD; StartDate DD.MM.YYYY per API)
+function M.scenario_set_start(date_slash, time_hms)
+    local y, m, d = date_slash:match('^(%d+)/(%d+)/(%d+)$')
+    if not y then
+        print('ERROR: scenario_set_start — bad date ' .. tostring(date_slash) .. ' (want YYYY/MM/DD)')
+        return
+    end
+    ScenEdit_SetTime({
+        dateformat = 'YYYYMMDD',
+        date = M.mission_schedule_date(date_slash),
+        time = time_hms,
+        StartDate = string.format('%s.%s.%s', d, m, y),
+        StartTime = time_hms,
+    })
+end
+
 function M.resolve_mission_guid(side, mission_name)
     if not mission_name or mission_name == '' then
         return nil

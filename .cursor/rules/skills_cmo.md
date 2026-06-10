@@ -61,8 +61,15 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 - **Weapon verification:** SAM and some facilities may have empty or wrong DBIDs in merged DBs.
   - **Check:** `scripts/db_search.py --weapons [ID] --type DataFacility`
   - **Empty units:** No mounts/magazines in search → unit cannot fire in-game; pick another DBID (e.g. battery/section instead of generic “SAM site”).
-  - **Operator country:** Each unit has `OperatorCountry`. Preflight fails if `place_ship` / `place_sub` / `spawn_air_wing` uses an operator that does not match the Lua `side` (e.g. a Soviet-operated hull placed on a NATO side).
-  - **Junkyard/Generic — last resort:** The DB lists duplicate units under **Junkyard** (9999) or **Generic** — same name, no nation. After `db_search.py "<name>"`, **first** pick a row whose **Operator** column shows a real country or **NATO** (2060). Use Junkyard/Generic only when no national variant fits; add `-- @operator_last_resort` and explain in the OOB header. Preflight **warns** (stronger if alternatives exist).
+  - **Operator country:** Each unit has `OperatorCountry`. Preflight checks that DB operator matches `@nationality` (and loosely matches the Lua `side` for obvious mismatches, e.g. a US hull on a Cuba side).
+  - **No national DB row — export proxy (preferred over Junkyard):** When authoritative references (PDF, OOB, campaign history) show a nation **operated** equipment but the DB has **no** `OperatorCountry` for that nation, use the **exporting/supplying nation's** DBID for the same platform (often the original manufacturer or Cold War supplier). Place the unit on the correct scenario **side**; annotate **`@nationality`** with the actual operator and **`@export_proxy`** with the DB supplier. Preflight accepts when the DB operator matches `@export_proxy`. Prefer this over Junkyard/Generic — exporter entries usually have correct mounts, magazines, and sensors.
+  - **Junkyard/Generic — last resort:** The DB lists duplicate units under **Junkyard** (9999) or **Generic** — same name, no nation. After `db_search.py "<name>"`, **first** pick a row whose **Operator** column shows a real country or **NATO** (2060), or an **export proxy** as above. Use Junkyard/Generic only when neither a national nor exporter row fits; add `-- @operator_last_resort` and explain in the OOB header. Preflight **warns** (stronger if alternatives exist).
+
+  ```lua
+  -- @nationality Libya
+  -- @export_proxy Soviet Union   -- BM-21: no Libya operator in DB; USSR export
+  place_sam('Libya', 'BM-21 Battery SW Benghazi', 1959, 31.85, 19.97)
+  ```
   - **Pitfall:** “F-35A Lightning II” may map to multiple DBIDs per country — wrong ID → wrong loadouts, sensors, or markings.
 - **Loadout / weapon config:**
   - **Aircraft:** `LoadoutID` is tied to `AircraftID`. Always confirm with `--loadouts` or `DataAircraftLoadouts`.
@@ -109,18 +116,34 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 ## 4. Scenario design workflow
 
-0. **OOB header (mandatory):** Comment block at top — year/DB, sides, missions, force composition, objectives. Cross-check force levels against **§1 Reference PDFs** when a matching local PDF exists, before locking unit counts.
-1. **Sides & posture (mandatory on blank scenarios):** `ScenEdit_AddSide({side='...'})` for **every** side **before** `ScenEdit_SetSidePosture`, `ScenEdit_AddMission`, or any spawn. Preflight fails with `Sides:` if a referenced side was never added (CMO: *Unable to identify Side-A!*).
-2. **Reference points:** every `ScenEdit_AddReferencePoint` needs **`side=`** matching the mission that uses the RP in `zone={...}` (duplicate name/coords per side if needed). Preflight: `Reference point:` errors.
-3. Infrastructure — CSG (carrier + escorts), bases; see `logic_checks_cmo.md` §4.
-4. Units — assign aircraft to bases/carriers.
-5. Missions — create then assign.
-6. Events — triggers/actions as needed.
+0. **OOB header (mandatory):** Comment block at top — historical date, year/DB, sides, missions, force composition, objectives. Cross-check force levels against **§1 Reference PDFs** when a matching local PDF exists, before locking unit counts.
+1. **Scenario date (mandatory):** One canonical `local scenario_date = 'YYYY/MM/DD'` for the historical in-game day. Derive `scenario_year`, `strike_package_date`, `ScenEdit_SetTime` StartDate/date, and `@strike_package date=` from it. Preflight: **`Scenario date:`** errors on mismatch.
+2. **Sides & posture (mandatory on blank scenarios):** `ScenEdit_AddSide({side='...'})` for **every** side **before** `ScenEdit_SetSidePosture`, `ScenEdit_AddMission`, or any spawn. Preflight fails with `Sides:` if a referenced side was never added (CMO: *Unable to identify Side-A!*).
+3. **Reference points:** every `ScenEdit_AddReferencePoint` needs **`side=`** matching the mission that uses the RP in `zone={...}` (duplicate name/coords per side if needed). Preflight: `Reference point:` errors.
+4. Infrastructure — CSG (carrier + escorts), bases; see `logic_checks_cmo.md` §4.
+5. Units — assign aircraft to bases/carriers.
+6. Missions — create then assign.
+7. Events — triggers/actions as needed.
 
 ## 5. Date & time tools
 
-- `Tool_DateTimeToSeconds("2026-05-08 14:00:00")`
-- `Tool_SecondsToDateTime(seconds)`
+**Canonical day** — define once at the top:
+
+```lua
+local scenario_date = '2011/03/19'
+local scenario_year = tonumber(scenario_date:sub(1, 4))
+local scenario_start_time = '08:00:00'
+local strike_package_date = scenario_date
+
+cmo.scenario_set_start(scenario_date, scenario_start_time)
+```
+
+- `scenario_date` = historical in-game calendar day (must match OOB header and `@strike_package date=`).
+- `scenario_start_time` = H-hour (before first mission takeoff / strike TOT).
+- **`cmo.scenario_set_start`** wraps `ScenEdit_SetTime` with correct CMO formats: `dateformat=YYYYMMDD`, `date=YYYY.MM.DD`, **`StartDate=DD.MM.YYYY`** (do not pass compact `20110319` to `StartDate` — API expects day-first).
+- `cmo.mission_schedule_datetime(scenario_date, 'HH:MM:SS')` → `YYYY.MM.DD HH:MM:SS` for `ScenEdit_SetMission`.
+- `CreateMissionFlightPlan` uses `DATEONTARGET = scenario_date` (slashes).
+- `Tool_DateTimeToSeconds("2026-05-08 14:00:00")` / `Tool_SecondsToDateTime(seconds)` for ad-hoc math.
 
 ## 6. Init log messages (mandatory)
 
@@ -209,8 +232,11 @@ Reference implementation: your latest scenario in `generated/` (gitignored local
 -- @scenario_policy nuclear=false
 -- @strike_package mission=... date=YYYY/MM/DD time=HH:MM:SS ...
 -- @naval_package mission=... launch=HH:MM:SS tot=HH:MM:SS minutes_before_strike_tot=N
-local scenario_year = 2026
-local strike_package_date = '2026/06/01'
+local scenario_date = '2026/06/01'
+local scenario_year = tonumber(scenario_date:sub(1, 4))
+local scenario_start_time = '06:00:00'
+local scenario_date_ymd = scenario_date:gsub('/', '')
+local strike_package_date = scenario_date
 local strike_package_tot = '06:30:00'
 local tlam_launch_time = '05:54:00'
 local db_series = (scenario_year > 1980) and 'DB3K' or 'CWDB'

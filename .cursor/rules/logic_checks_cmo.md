@@ -200,13 +200,23 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - **Munitions era**: strike loadouts with only unguided names in modern years (see §1).
   - **Role fit**: carrier-capable variants, CSG composition, SEAD=Patrol, tanker for long-range strike — by **category/name**, not a single national inventory.
 - **What it does not do**: no requirement for "at least 4× stealth" or "Super Hornet only"; it does not replace scenario design. Deliberate obsolete opponents (MiG-21, SA-2) in 2026 are allowed — expect decommission warnings unless explained in comments.
-- **Workflow**: year → DB series (§17) → search suitable units → precision/standoff loadouts for that year → preflight.
+- **Workflow**: scenario_date → DB series (§18) → search suitable units → precision/standoff loadouts for that year → preflight.
 - **Nationality / OperatorCountry (per hull) — mandatory**: The DB `OperatorCountry` of each spawned/placed unit must match its intended nationality. A **coalition side name** (e.g. `NATO Air Defense`, which hosts Polish, Dutch, German and US hulls) **cannot** enforce this — the side-level operator check passes anything. Declare intent explicitly with an inline `-- @nationality <Country>` annotation on each `spawn_air_wing` / `add_air_unit_checked` / `place_ship` / `place_sub` / `place_sam` line (on the same line or the line directly above the call).
   - *Preflight*: `--validate-scenario` resolves the DB `OperatorCountry` for the dbid and **errors** on mismatch. `NATO` operator matches `@nationality NATO` only; **Junkyard/Generic do not prove** a declared `@nationality` (warning). Bracketed forms (`Russia [1992-]`, `Germany [FRG/Reunified]`) and common aliases (dutch→Netherlands, polish→Poland, usa→United States, …) are normalized.
   - *Pitfall*: same airframe name, different national DBID — e.g. F-35A id **3326** is **Norwegian**, id **3902** is **Dutch**; a Polish "F-16C" labelled with a US-operated dbid is also wrong. Always confirm the operator before delivery (`db_search.py "<unit>"` → **Operator** column shows id + country name).
-  - *Junkyard/Generic — last resort only*: CMO duplicates many units under `OperatorCountry` **Junkyard** (id **9999**) or **Generic** — same `Name`, no real nation. **Prefer** a national or NATO-operated DBID whenever one exists (e.g. E-3C **304** = Junkyard → use **3186** NATO, **209** US, or **97** UK). Use Junkyard/Generic **only when no suitable national variant exists** in the DB for that role; document why in the scenario header and add `-- @operator_last_resort` on the spawn line. Preflight **warns** on Junkyard/Generic (stronger warning when national alternatives exist); wrong-nationality mismatches remain **errors**, Junkyard+`@nationality` mismatch is a **warning**.
+  - *Export proxy — when the nation is missing from the DB*: If references confirm country **X** operated a system but `db_search.py` shows **no** row with `Operator` = X, use the **exporting/supplying nation's** DBID (same equipment name/type). Annotate `-- @nationality X` (scenario truth) and `-- @export_proxy <supplier>` (DB operator). Unit stays on side X. Preflight **OK** when DB `OperatorCountry` matches `@export_proxy`. **Prefer** exporter rows over Junkyard/Generic — mounts/magazines are usually complete. Document the source in the OOB header.
+  - *Junkyard/Generic — last resort only*: CMO duplicates many units under `OperatorCountry` **Junkyard** (id **9999**) or **Generic** — same `Name`, no real nation. **Prefer** a national, NATO, or **export-proxy** DBID whenever one exists (e.g. E-3C **304** = Junkyard → use **3186** NATO, **209** US, or **97** UK). Use Junkyard/Generic **only when no suitable national or exporter variant exists**; document why in the scenario header and add `-- @operator_last_resort` on the spawn line. Preflight **warns** on Junkyard/Generic (stronger warning when national alternatives exist); wrong-nationality mismatches remain **errors** unless `@export_proxy` documents the supplier, Junkyard+`@nationality` mismatch is a **warning**.
 
-## 16. Sides must exist before use (mandatory)
+## 16. Scenario date consistency (mandatory)
+- **One calendar day**: `local scenario_date = 'YYYY/MM/DD'` is the historical in-game date (must match the OOB header). Derive from it:
+  - `scenario_year = tonumber(scenario_date:sub(1, 4))`
+  - `strike_package_date = scenario_date`
+  - `ScenEdit_SetTime` `StartDate` / `date` → `scenario_date:gsub('/', '')` (YYYYMMDD)
+  - `@strike_package date=` and `@sead_package date=` → same `scenario_date`
+- **Symptom**: CMO scenario clock or strike flight plans on the wrong day; era-fit checks use a different year than the scripted events.
+- **Check**: `--validate-scenario` reports **`Scenario date:`** errors when `scenario_year`, `strike_package_date`, `SetTime`, or package annotations disagree with `scenario_date`. Warning if `scenario_date` is missing.
+
+## 17. Sides must exist before use (mandatory)
 - **Blank scenario rule**: Lua that builds a scenario from scratch must call `ScenEdit_AddSide({side='SideName'})` for each side **before** any `ScenEdit_SetSidePosture`, `ScenEdit_SetSideOptions`, `ScenEdit_AddMission`, `ScenEdit_SetMission`, `ScenEdit_SetDoctrine`, `spawn_air_wing` / `place_*`, or `ScenEdit_AddUnit`.
 - **Symptom in CMO**: `ScenEdit_SetSidePosture 0 : ,Unable to identify Side-A!` when posture runs against a side that was never added.
 - **Check**: `python scripts/db_search.py --validate-scenario generated/<file>.lua` reports **`Sides:`** errors for missing or out-of-order `ScenEdit_AddSide`. Resolves `local SIDE_X = 'France'` aliases used in AddSide/posture calls.
@@ -224,7 +234,7 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
 - **Mission zones**: a patrol/support `zone = { 'RP-A', 'RP-B' }` on side `France` requires `AddReferencePoint` rows with **`side='France'`** and those exact names (duplicate coords on `Libya` if a Libya mission reuses the same RP names).
 - **Check**: `--validate-scenario` reports **`Reference point:`** errors for missing `side=`, unknown side, or zone/RP side mismatch.
 
-## 17. Database Series Mapping (DB3K vs CWDB)
+## 18. Database Series Mapping (DB3K vs CWDB)
 - **Hard year rule**:
   - If `Year > 1980` → use `DB3K`.
   - If `Year < 1980` → use `CWDB`.

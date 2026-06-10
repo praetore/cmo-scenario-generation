@@ -590,6 +590,131 @@ def _validate_tlam_shooter_weapon_policy(content):
 
     return errors, warnings, ok
 
+def _resolve_scenedit_settime_date(content, canonical_scenario_date):
+    """
+    Resolve the calendar day used in ScenEdit_SetTime — literal YYYYMMDD or
+    scenario_date_ymd derived from scenario_date.
+    """
+    set_date_key, _set_time = _parse_scenario_start_time(content)
+    if set_date_key:
+        return _normalize_date_slash_key(set_date_key)
+    if not canonical_scenario_date:
+        return None
+    uses_set_time = bool(re.search(r"ScenEdit_SetTime\s*\(", content, re.IGNORECASE))
+    uses_helper = bool(
+        re.search(r"(?:cmo\.)?scenario_set_start\s*\(\s*scenario_date\b", content, re.IGNORECASE)
+    )
+    if not uses_set_time and not uses_helper:
+        return None
+    if uses_helper and canonical_scenario_date:
+        return canonical_scenario_date
+    if re.search(
+        r"local\s+scenario_date_ymd\s*=\s*scenario_date:gsub\s*\(\s*'/'\s*,\s*''\s*\)",
+        content,
+        re.IGNORECASE,
+    ) and re.search(
+        r"dateformat\s*=\s*'YYYYMMDD'",
+        content,
+        re.IGNORECASE,
+    ) and re.search(
+        r"date\s*=\s*(?:scenario_date_ymd|cmo\.mission_schedule_date\s*\(\s*scenario_date\s*\)|"
+        r"mission_schedule_date\s*\(\s*scenario_date\s*\))",
+        content,
+        re.IGNORECASE,
+    ):
+        return canonical_scenario_date
+    return None
+
+
+def _validate_scenario_date_consistency(content):
+    """
+    One canonical calendar day: local scenario_date drives SetTime, strike_package_date,
+    @strike_package date=, and scenario_year.
+    """
+    errors = []
+    warnings = []
+    ok = []
+
+    canonical = _parse_scenario_date(content)
+    if not canonical:
+        warnings.append(
+            "Scenario date: define local scenario_date = 'YYYY/MM/DD' (historical in-game day) "
+            "and derive strike_package_date + ScenEdit_SetTime from it."
+        )
+        return errors, warnings, ok
+
+    year = int(canonical[:4])
+    scenario_year = _parse_scenario_year(content)
+    if scenario_year is not None and scenario_year != year:
+        errors.append(
+            f"Scenario date: scenario_year={scenario_year} disagrees with "
+            f"scenario_date={canonical} (year {year})."
+        )
+
+    strike_date_m = re.search(
+        r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    if strike_date_m:
+        strike_date = _normalize_date_slash_key(strike_date_m.group(1))
+        if strike_date and strike_date != canonical:
+            errors.append(
+                f"Scenario date: strike_package_date='{strike_date_m.group(1)}' "
+                f"!= scenario_date {canonical}."
+            )
+    elif re.search(r"strike_package_date\s*=\s*scenario_date", content, re.IGNORECASE):
+        ok.append(f"OK: Scenario date — strike_package_date derived from scenario_date ({canonical}).")
+    else:
+        warnings.append(
+            f"Scenario date: set local strike_package_date = scenario_date "
+            f"(canonical day is {canonical})."
+        )
+
+    set_slash = _resolve_scenedit_settime_date(content, canonical)
+    if set_slash is None:
+        if re.search(r"ScenEdit_SetTime\s*\(", content, re.IGNORECASE):
+            warnings.append(
+                "Scenario date: ScenEdit_SetTime present but StartDate/date not tied to "
+                "scenario_date — use cmo.scenario_set_start(scenario_date, time) or "
+                "date=YYYY.MM.DD + StartDate=DD.MM.YYYY."
+            )
+        elif not re.search(
+            r"(?:cmo\.)?scenario_set_start\s*\(\s*scenario_date\b", content, re.IGNORECASE
+        ):
+            warnings.append(
+                "Scenario date: no ScenEdit_SetTime / scenario_set_start — set H-hour from scenario_date."
+            )
+    elif set_slash != canonical:
+        errors.append(
+            f"Scenario date: ScenEdit_SetTime date {set_slash} != scenario_date {canonical}."
+        )
+
+    packages, _waves = _parse_strike_package_annotations(content)
+    for pkg in packages:
+        ann_date = pkg.get("date")
+        if ann_date:
+            ann_key = _normalize_date_slash_key(ann_date)
+            if ann_key and ann_key != canonical:
+                errors.append(
+                    f"Scenario date: @strike_package date={ann_date} "
+                    f"!= scenario_date {canonical}."
+                )
+
+    sead_pkgs = _parse_sead_package_annotations(content)
+    for pkg in sead_pkgs:
+        ann_date = pkg.get("date")
+        if ann_date:
+            ann_key = _normalize_date_slash_key(ann_date)
+            if ann_key and ann_key != canonical:
+                errors.append(
+                    f"Scenario date: @sead_package date={ann_date} "
+                    f"!= scenario_date {canonical}."
+                )
+
+    if not errors:
+        ok.append(f"OK: Scenario date — all declared dates align on {canonical}.")
+    return errors, warnings, ok
+
+
 def _validate_strike_tot_synchronization(content, mission_map):
     """Hardcoded strike timing: one strike_package_tot everywhere; no sync_* in scenario body."""
     errors = []
@@ -1493,9 +1618,24 @@ _NATIONALITY_SPAWN_PATTERNS = (
 _NATIONALITY_ANNOTATION_RE = re.compile(
     r"--\s*@nationality\s+([^\n]+?)\s*$", re.IGNORECASE
 )
+_EXPORT_PROXY_ANNOTATION_RE = re.compile(
+    r"--\s*@export_proxy\s+([^\n]+?)\s*$", re.IGNORECASE
+)
 _OPERATOR_LAST_RESORT_RE = re.compile(
     r"--\s*@operator_last_resort\b", re.IGNORECASE
 )
+
+
+def _annotation_on_line_or_prev(lines, idx, pattern):
+    """Return first capture from pattern on line idx or the preceding comment line."""
+    m = pattern.search(lines[idx])
+    if m:
+        return m.group(1).strip()
+    if idx > 0 and lines[idx - 1].strip().startswith("--"):
+        m = pattern.search(lines[idx - 1])
+        if m:
+            return m.group(1).strip()
+    return None
 
 
 def _line_has_operator_last_resort(lines, idx):
@@ -1526,17 +1666,19 @@ def _parse_declared_nationalities(content):
     """
     Find spawn/place calls carrying an inline `-- @nationality <Country>` annotation.
 
-    Returns list of (table, dbid, label, declared_nationality, line_no). The annotation
-    may sit on the same line as the call or on the line directly above it.
+    Returns list of (table, dbid, label, declared_nationality, line_no, export_proxy).
+    Annotations may sit on the same line as the call or on comment-only lines directly above.
     """
     lines = content.splitlines()
-    # Pre-compute the declared nationality attached to each line (same line wins,
-    # otherwise inherit from the immediately preceding comment-only line).
     decl_on_line = [None] * len(lines)
+    proxy_on_line = [None] * len(lines)
     for idx, line in enumerate(lines):
         m = _NATIONALITY_ANNOTATION_RE.search(line)
         if m:
             decl_on_line[idx] = m.group(1).strip()
+        m = _EXPORT_PROXY_ANNOTATION_RE.search(line)
+        if m:
+            proxy_on_line[idx] = m.group(1).strip()
 
     results = []
     for idx, line in enumerate(lines):
@@ -1546,13 +1688,18 @@ def _parse_declared_nationalities(content):
                 continue
             label = m.group(1)
             dbid = int(m.group(2))
-            declared = decl_on_line[idx]
+            declared = _annotation_on_line_or_prev(lines, idx, _NATIONALITY_ANNOTATION_RE)
             if declared is None and idx > 0:
                 prev = lines[idx - 1].strip()
                 if prev.startswith("--") and decl_on_line[idx - 1]:
                     declared = decl_on_line[idx - 1]
+            export_proxy = _annotation_on_line_or_prev(lines, idx, _EXPORT_PROXY_ANNOTATION_RE)
+            if export_proxy is None and idx > 0:
+                prev = lines[idx - 1].strip()
+                if prev.startswith("--") and proxy_on_line[idx - 1]:
+                    export_proxy = proxy_on_line[idx - 1]
             if declared:
-                results.append((table, dbid, label, declared, idx + 1))
+                results.append((table, dbid, label, declared, idx + 1, export_proxy))
     return results
 
 
@@ -1575,8 +1722,9 @@ def _validate_declared_nationality(content, db, series, version):
         )
         return errors, warnings, ok
 
-    checked = 0
-    for table, dbid, label, declared, line_no in declared_units:
+    direct_match = 0
+    export_proxy_ok = 0
+    for table, dbid, label, declared, line_no, export_proxy in declared_units:
         _op_id, op_desc = _unit_operator_description(db, table, dbid, series, version)
         if not op_desc:
             warnings.append(
@@ -1584,29 +1732,45 @@ def _validate_declared_nationality(content, db, series, version):
                 f"line {line_no}) — cannot verify declared '{declared}'."
             )
             continue
-        checked += 1
-        if not _operator_desc_matches_nationality(declared, op_desc):
-            if _is_placeholder_operator(op_desc):
-                alts = [
-                    a for a in _national_operator_alternatives(db, table, dbid, series, version)
-                    if declared.lower() in a.lower()
-                    or _normalize_nationality(declared) in _normalize_nationality(a).lower()
-                ]
-                alt_hint = f" Prefer: {', '.join(alts)}." if alts else ""
-                warnings.append(
-                    f"Nationality: {label} (ID {dbid}, line {line_no}) is Junkyard/Generic "
-                    f"— cannot verify '@nationality {declared}'.{alt_hint} Use a national "
-                    f"DBID when available; else @operator_last_resort."
-                )
-            else:
-                errors.append(
-                    f"Nationality mismatch: {label} (ID {dbid}, {table}, line {line_no}) is "
-                    f"operated by '{op_desc}' in the DB but declared '@nationality {declared}'. "
-                    f"Pick a DB entry operated by {declared}, or correct the annotation."
-                )
-    if checked and not any(e.startswith("Nationality mismatch") for e in errors):
+        if _operator_desc_matches_nationality(declared, op_desc):
+            direct_match += 1
+            continue
+        if export_proxy and _operator_desc_matches_nationality(export_proxy, op_desc):
+            export_proxy_ok += 1
+            ok.append(
+                f"OK: Export proxy — '{label}' (ID {dbid}, line {line_no}): "
+                f"@nationality {declared} uses DB entry operated by '{op_desc}' "
+                f"(@export_proxy {export_proxy})."
+            )
+            continue
+        if _is_placeholder_operator(op_desc):
+            alts = [
+                a for a in _national_operator_alternatives(db, table, dbid, series, version)
+                if declared.lower() in a.lower()
+                or _normalize_nationality(declared) in _normalize_nationality(a).lower()
+            ]
+            alt_hint = f" Prefer: {', '.join(alts)}." if alts else ""
+            warnings.append(
+                f"Nationality: {label} (ID {dbid}, line {line_no}) is Junkyard/Generic "
+                f"— cannot verify '@nationality {declared}'.{alt_hint} Use a national "
+                f"DBID when available; else @export_proxy <supplier> or @operator_last_resort."
+            )
+        else:
+            errors.append(
+                f"Nationality mismatch: {label} (ID {dbid}, {table}, line {line_no}) is "
+                f"operated by '{op_desc}' in the DB but declared '@nationality {declared}'. "
+                f"Pick a DB entry operated by {declared}, add @export_proxy <exporter> if "
+                f"the DB only lists the supplying nation, or correct the annotation."
+            )
+    has_mismatch = any(e.startswith("Nationality mismatch") for e in errors)
+    if direct_match and not has_mismatch:
         ok.append(
-            f"OK: Nationality — {checked} annotated unit(s) match their DB OperatorCountry."
+            f"OK: Nationality — {direct_match} annotated unit(s) match their DB OperatorCountry."
+        )
+    if export_proxy_ok and not has_mismatch:
+        ok.append(
+            f"OK: Export proxy — {export_proxy_ok} unit(s) use supplier DBIDs with "
+            f"documented @export_proxy."
         )
     return errors, warnings, ok
 

@@ -1013,6 +1013,26 @@ def _parse_scenario_year(content):
     match = re.search(r"scenario_year\s*=\s*(\d{4})", content, re.IGNORECASE)
     return int(match.group(1)) if match else None
 
+
+def _normalize_date_slash_key(date_str):
+    """Canonical YYYY/MM/DD from slash, dot, compact, or CMO SetTime YYYYMMDD."""
+    if not date_str:
+        return None
+    s = str(date_str).strip()
+    if re.fullmatch(r"\d{8}", s):
+        return f"{s[:4]}/{s[4:6]}/{s[6:8]}"
+    s = s.replace(".", "/").replace("-", "/")
+    m = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})", s)
+    if m:
+        return f"{m.group(1)}/{int(m.group(2)):02d}/{int(m.group(3)):02d}"
+    return None
+
+
+def _parse_scenario_date(content):
+    """local scenario_date = 'YYYY/MM/DD' — canonical in-game calendar day."""
+    match = re.search(r"local\s+scenario_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    return _normalize_date_slash_key(match.group(1)) if match else None
+
 def _unit_service_record(db, table, unit_id, series, version):
     """Name, YearCommissioned, YearDecommissioned from DataAircraft, DataShip, or DataSubmarine."""
     if table not in ("DataAircraft", "DataShip", "DataSubmarine"):
@@ -2071,7 +2091,20 @@ def _normalize_date_key(date_str):
     return digits[4:8] + digits[0:4]
 
 def _parse_scenario_start_time(content):
-    """(date_key, time_hhmmss) from ScenEdit_SetTime StartDate/StartTime or date/time keys."""
+    """(date_key, time_hhmmss) from ScenEdit_SetTime or cmo.scenario_set_start."""
+    helper = re.search(
+        r"(?:cmo\.)?scenario_set_start\s*\(\s*scenario_date\s*,\s*(?:scenario_start_time|['\"]([^'\"]+)['\"])\s*\)",
+        content,
+        re.IGNORECASE,
+    )
+    if helper:
+        canon = _parse_scenario_date(content)
+        if canon:
+            time_val = helper.group(1)
+            if not time_val:
+                tm = re.search(r"local\s+scenario_start_time\s*=\s*'([^']+)'", content, re.IGNORECASE)
+                time_val = tm.group(1) if tm else None
+            return _normalize_date_key(canon), time_val
     match = re.search(
         r"ScenEdit_SetTime\s*\(\s*\{([^}]*)\}",
         content,

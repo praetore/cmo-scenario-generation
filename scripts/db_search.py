@@ -522,6 +522,11 @@ def validate_scenario_air_loadouts(
     warnings.extend(naval_time_warnings)
     ok.extend(naval_time_ok)
 
+    date_errors, date_warnings, date_ok = _validate_scenario_date_consistency(content)
+    errors.extend(date_errors)
+    warnings.extend(date_warnings)
+    ok.extend(date_ok)
+
     tot_errors, tot_warnings, tot_ok = _validate_strike_tot_synchronization(
         content, mission_map
     )
