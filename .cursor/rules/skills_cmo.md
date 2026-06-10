@@ -91,6 +91,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 - **Nil checks:** Verify `ScenEdit_AddUnit` succeeded before using `.guid`.
 - **Strike escort:** Third parameter `true` on `ScenEdit_AssignUnitToMission` for strike escort slot.
+- **Strike counts:** Tel strikers (zonder `escort=true`) en escorts op dezelfde Strike-missie; `required_escorts = ceil(strikers ÷ StrikeFlightSize) × EscortMinShooter`. Zie `logic_checks_cmo.md` §1 **Strike striker/escort counts**; preflight: `Strike escort coverage`.
 - **Nullable .NET errors:** For AIR on base, prefer `altitude = '0'` (string); for ships/facilities use `altitude = 0`.
 
 ### Mission management (`ScenEdit_AddMission`)
@@ -143,6 +144,8 @@ cmo.scenario_set_start(scenario_date, scenario_start_time)
 - **`cmo.scenario_set_start`** wraps `ScenEdit_SetTime` with correct CMO formats: `dateformat=YYYYMMDD`, `date=YYYY.MM.DD`, **`StartDate=DD.MM.YYYY`** (do not pass compact `20110319` to `StartDate` — API expects day-first).
 - `cmo.mission_schedule_datetime(scenario_date, 'HH:MM:SS')` → `YYYY.MM.DD HH:MM:SS` for `ScenEdit_SetMission`.
 - `CreateMissionFlightPlan` uses `DATEONTARGET = scenario_date` (slashes).
+- Patrol/Support **Time on Station** in ME: `set_patrol_on_station_schedule` — **Patrol** uses `CreateMissionFlightPlan` `TIMEONTARGET`; **Support** (land ISR) uses wrapper `TimeOnTargetStation` + `CreateMissionFlightPlan` `TAKEOFFTIME` (transit default 90 min). Do not use `TIMEONTARGET` flight plan on Support — it clears GetMission fields.
+- After TOT/TOS assignment: `verify_mission_schedule` — **fatal** on `TimeOnTargetStation` / on-station mismatch. Strike: `set_strike_tot_schedule` (flight plan + wrapper TOT). Patrol/Support: `set_patrol_on_station_schedule`. Unified strike `starttime`/`TakeOffTime` in GetMission often empty → `optional_fields = { 'starttime', 'takeoff' }`.
 - `Tool_DateTimeToSeconds("2026-05-08 14:00:00")` / `Tool_SecondsToDateTime(seconds)` for ad-hoc math.
 
 ## 6. Init log messages (mandatory)
@@ -160,35 +163,49 @@ During Lua import, CMO shows `print()` output in the **Message Log**. Use prefix
 
 **Rule:** If `GetMission` / ME shows empty data at import but **Play** (or a registered event) fixes it, log **`NOTE:`** or **`OK:`** with explicit text — **never `ERROR:`** for that condition alone.
 
-### TLAM + solo CG (template)
+### Unified strike package (air + naval assets)
 
-Bootstrap helpers follow this; scenarios should mirror the summary line:
+One **Strike** mission is the **strike package**: it unifies all strike assets (air strikers/escorts + naval TLAM shooters) under one launch schedule and TOT. Say *unify strike assets on the package mission* — not *CSG joins the air strike*. Internal names (`STRIKE_AIR_MISSION`, `setup_csg_strike_on_air_strike`) are historical. Bootstrap helpers follow this; scenarios should mirror the summary line:
 
 ```lua
 -- Hardcoded times at top (same strike_package_tot for air + TLAM):
 local strike_package_tot = '06:30:00'
-local tlam_launch_time = '05:54:00'
--- After OOB + targets:
-local strike_tot_dt = mission_schedule_datetime(strike_package_date, strike_package_tot)
--- Air TOT:
+local tlam_launch_time = '05:45:00'
+-- After OOB + targets + air flight plan:
 ScenEdit_CreateMissionFlightPlan(side, STRIKE_AIR_MISSION, {
     DATEONTARGET = strike_package_date,
     TIMEONTARGET = strike_package_tot,
 })
--- TLAM (no sync_* — setup_solo_tlam_shooter sets schedule after CG assign):
-setup_solo_tlam_shooter(bunker_hill)
+finalize_strike_air_after_flight_plan()
+-- Unify naval strike assets on the same Strike mission as aircraft (launch + TOT):
+local strike_ships = {}
+for _, hull in ipairs({ nimitz, ddg51, ddg51_escort, bunker_hill }) do
+    if hull then table.insert(strike_ships, hull) end
+end
+setup_csg_strike_on_air_strike(CSG_GROUP, strike_ships)  -- function name is historical; unifies strike assets
+restore_all_spawned_air_assignments(STRIKE_AIR_MISSION)
 print('Strike schedule (hardcoded): TOT=' .. strike_package_tot .. ' Z | TLAM launch=' .. tlam_launch_time .. ' Z')
 ```
 
 **Do not** call `sync_naval_strike_tot`, `sync_air_strike_tot`, or naval `CreateMissionFlightPlan` in scenarios — they clear air ORBAT or add fragile sync. Preflight verifies **reachability** first; only then timed `SetMission` after OOB.
 
+**CMO quirks (general — not scenario-specific):**
+
+| Quirk | Fix |
+| :--- | :--- |
+| Naval assets on unified Strike + flight plan only → Tomahawks at **scenario start** | `starttime` + `TimeOnTargetStation` on the package mission (`set_naval_strike_schedule` / `setup_csg_strike_on_air_strike`) |
+| Adding naval assets or `SetMission` on the package clears **aircraft ORBAT** | `finalize_strike_air_after_flight_plan()` + `restore_all_spawned_air_assignments()` + `add_strike_assign_restore_event()` at Play |
+| Empty magazines + shared strike doctrine → **guns on land** | `configure_strike_ship_weapon_policy` per hull (auto on Strike assign) + play-time WRA refresh |
+| SEAD/Patrol `MinAircraftReq` × `FlightSize` = launch trigger | Set `MinAircraftReq` to **flight count**, not total aircraft (same as `StrikeMinAircraftReq × StrikeFlightSize`) |
+| `AssignUnitToMission(group_name, patrol)` clears TLAM shooters | Assign patrol on **group lead (CVN) only** |
+
 Helper messages (see `scenario_bootstrap.lua`):
 
-- `NOTE: … schedule empty in GetMission after solo assign … check ME (TLAM event restores at Play if needed)`
-- `OK: TLAM detached finalize — TOT=…` / `OK: TLAM event "…" (ScenLoaded, Time=…)`
-- **Legacy grouped CG:** `finalize_csg_tlam` — ME schedule often empty; prefer `setup_solo_tlam_shooter`.
+- `OK: <strike mission> launch=… TOT=… (N CSG hull(s))`
+- `OK: Strike ship gun policy events for … — ScenLoaded + …`
+- **Legacy solo CG:** `setup_solo_tlam_shooter` — `NOTE:` when `GetMission` empty at import until Play.
 
-**Verification:** Message Log at import + **Mission Editor** (launch/TOT on Caribbean TLAM Salvo, CG solo, CVN+DDGs in CSG group).
+**Verification:** Message Log at import + **Mission Editor** (all strike assets — air + naval — on one Strike mission, launch/TOT visible, gun WRA blocked on land).
 
 ### When adding new CMO quirks
 
@@ -231,7 +248,7 @@ Reference implementation: your latest scenario in `generated/` (gitignored local
 ```lua
 -- @scenario_policy nuclear=false
 -- @strike_package mission=... date=YYYY/MM/DD time=HH:MM:SS ...
--- @naval_package mission=... launch=HH:MM:SS tot=HH:MM:SS minutes_before_strike_tot=N
+-- @naval_package mission=... launch=HH:MM:SS tot=HH:MM:SS minutes_before_strike_tot=N  (optional when naval assets share the unified strike mission)
 local scenario_date = '2026/06/01'
 local scenario_year = tonumber(scenario_date:sub(1, 4))
 local scenario_start_time = '06:00:00'
@@ -245,7 +262,7 @@ if not cmo.assert_db_series(scenario_year, 'DB3K') then return end
 cmo.configure_strike_timing({
     date = strike_package_date, tot = strike_package_tot,
     tlam_launch = tlam_launch_time,
-    air_mission = 'My Air Strike', naval_mission = 'My TLAM Salvo',
+    air_mission = 'My Strike Package', naval_mission = 'My Strike Package',  -- one mission unifies air + naval strike assets
     side = 'United States',
 })
 local place_ship = cmo.place_ship
@@ -260,20 +277,20 @@ local spawn_air_wing = cmo.spawn_air_wing
 | Setup | `configure_strike_timing`, `strike_schedule_datetimes`, `set_naval_strike_schedule`, `assert_db_series`, `mission_schedule_date`, `mission_schedule_datetime` |
 | Spawn | `place_base`, `place_ship`, `place_sub`, `place_sam`, `add_air_unit_checked`, `spawn_air_wing` |
 | Assign | `assign_air_to_mission`, `assign_ship_to_mission`, `refresh_spawned_air_assignments`, `restore_all_spawned_air_assignments`, `resolve_mission_guid` |
-| Strike timing | `set_naval_strike_schedule`, `setup_solo_tlam_shooter`, `finalize_strike_air_after_flight_plan`, `verify_spawned_air_assignments` |
-| CSG / TLAM | `form_csg_group`, `setup_solo_tlam_shooter`, `add_tlam_shooter_event`, `finalize_detached_tlam_shooter` (legacy), `finalize_csg_tlam` (legacy grouped) |
+| Strike timing | `set_naval_strike_schedule`, `finalize_strike_air_after_flight_plan`, `verify_spawned_air_assignments`, `add_strike_assign_restore_event` |
+| Strike package / TLAM | `form_csg_group`, **`setup_csg_strike_on_air_strike`** (unify naval strike assets on package mission — preferred), `setup_csg_tlam_on_air_strike`, `configure_strike_ship_weapon_policy`, `add_strike_ship_weapon_policy_event`, `setup_solo_tlam_shooter` (legacy), `finalize_detached_tlam_shooter` / `finalize_csg_tlam` (legacy) |
 | Nuclear | `configure_nuclear_policy`, `weapon_dbid_is_nuclear` (DB warhead Type 4001 via embed), `strip_nuclear_from_unit` |
 
 Shared mutable state: **`cmo.state`** (`spawned_air_missions`, strike mission names, dates, etc.).
 
-### CSG + TLAM order (mandatory)
+### Unified strike package order (mandatory)
 
-1. Two Strike missions: **air** + **naval TLAM** (never put ships on the air strike mission).
-2. **CSG group:** `form_csg_group(CSG_GROUP, cvn, {ddg, …})` — **CG not in group**.
-3. Spawn air, assign strike targets.
-4. **Hardcoded schedule block** (after OOB): `strike_tot_dt`, `tlam_launch_dt`, SEAD/helo `SetMission`, then air `CreateMissionFlightPlan` with `TIMEONTARGET = strike_package_tot`.
-5. `finalize_strike_air_after_flight_plan()` → `setup_solo_tlam_shooter(cg)` → `restore_all_spawned_air_assignments()`.
-6. Preflight must pass **Strike TOT reachability** before you treat times as final.
+1. One **Strike** mission as the **strike package** — aircraft and naval TLAM shooters share it when using `setup_csg_strike_on_air_strike` (legacy: separate naval-only Strike).
+2. **CSG formation:** `form_csg_group(CSG_GROUP, cvn, {ddg, cg, …})` — escorts stay grouped; strike assets are assigned to the package mission in formation.
+3. Spawn strike aircraft, assign targets; `configure_strike_mission_options` **before** spawn.
+4. **Hardcoded schedule block** (after OOB): SEAD/ISR `set_patrol_on_station_schedule` (on-station), strike `set_strike_tot_schedule` (flight plan + wrapper TOT, fatal verify), then `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW → `setup_csg_strike_on_air_strike` → final `set_strike_tot_schedule` wrapper reassert.
+5. `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW `SetMission` (after SEAD time) → `setup_csg_strike_on_air_strike(CSG_GROUP, {cvn, ddg, cg, …})` (unify naval strike assets) → `restore_all_spawned_air_assignments()` → `add_strike_assign_restore_event()` for Play.
+6. Preflight must pass **Strike TOT reachability** and **SEAD flight size** before you treat times as final.
 
 ### Date formats
 

@@ -146,15 +146,23 @@ def find_insertion_index(lines):
 
     for i, line in enumerate(lines):
 
+        stripped = line.strip()
+
+        if stripped.startswith("--"):
+
+            continue
+
+        if re.search(r"\bcmo\.", line):
+
+            return i
+
+    for i, line in enumerate(lines):
+
         if re.match(r"\s*if\s+not\s+cmo\.assert_db_series\s*\(", line):
 
             return i
 
         if re.match(r"\s*cmo\.configure_strike_timing\s*\(", line):
-
-            return i
-
-        if re.match(r"\s*cmo\.", line):
 
             return i
 
@@ -174,9 +182,15 @@ def embed_bootstrap(scenario_text, series="DB3K", version="515"):
 
     bootstrap = bootstrap_lua_for_inline(series, version)
 
+    from datetime import datetime, timezone
+
+    built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     marker = (
 
-        "-- [inlined scenario_bootstrap.lua — edit scripts/scenario_bootstrap.lua; "
+        f"-- [inlined scenario_bootstrap.lua @ {built_at} UTC — "
+
+        "edit scripts/scenario_bootstrap.lua; "
 
         "re-run: python scripts/embed_bootstrap.py <scenario.lua>]\n"
 
@@ -324,7 +338,11 @@ def main(argv=None):
 
     out_path.write_text(merged, encoding="utf-8")
 
-    print(f"Wrote {out_path} ({out_path.stat().st_size} bytes)")
+    line_count = len(merged.splitlines())
+
+    print(f"Wrote {out_path} ({out_path.stat().st_size} bytes, {line_count} lines)")
+
+    print(f"CMO import: load {out_path.name} (not the source .lua without _import)")
 
     return 0
 

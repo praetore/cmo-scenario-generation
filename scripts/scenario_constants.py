@@ -53,7 +53,24 @@ _ASSIGN_TLAM_SHOOTER_CALL = (
     rf"assign_tlam_shooter\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*(?:,\s*\w+\s*)?\)"
 )
 
-# setup_solo_tlam_shooter(bunker_hill) — preferred solo TLAM (CG not in CSG group)
+# setup_csg_strike_on_air_strike(CSG_GROUP, {cvn,ddg,cg,...}) — unify naval strike assets on package mission (preferred)
+_GROUPED_CSG_STRIKE_CALL = (
+    rf"(?<!function\s)setup_csg_strike_on_air_strike\s*\(\s*\w+\s*,"
+)
+
+# setup_csg_tlam_on_air_strike(bunker_hill, CSG_GROUP) — single-hull wrapper
+_GROUPED_CSG_TLAM_CALL = (
+    rf"(?<!function\s)setup_csg_tlam_on_air_strike\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*,\s*\w+\s*\)"
+)
+
+_GROUPED_CSG_TLAM_CALL = rf"(?:{_GROUPED_CSG_STRIKE_CALL}|{_GROUPED_CSG_TLAM_CALL})"
+
+# setup_tlam_on_air_strike(bunker_hill) — CG solo on package mission (ungrouped legacy)
+_AIR_STRIKE_TLAM_CALL = (
+    rf"(?<!function\s)setup_tlam_on_air_strike\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*\)"
+)
+
+# setup_solo_tlam_shooter(bunker_hill) — legacy separate TLAM mission
 _SOLO_TLAM_CALL = rf"(?<!function\s)setup_solo_tlam_shooter\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*\)"
 
 # apply_naval_strike_flight_plan(bunker_hill, nil) — same intent as solo TLAM
@@ -63,17 +80,23 @@ _APPLY_NAVAL_TLAM_CALL = (
 
 # finalize_detached_tlam_shooter / setup_solo_tlam_shooter / apply_naval(..., nil) — CG outside CSG group
 _DETACHED_TLAM_CALL = (
-    rf"(?<!function\s)(?:finalize_detached_tlam_shooter\s*\(|setup_solo_tlam_shooter\s*\(|"
+    rf"(?<!function\s)(?:finalize_detached_tlam_shooter\s*\(|setup_tlam_on_air_strike\s*\(|"
+    rf"setup_solo_tlam_shooter\s*\(|"
     rf"apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}\s*,\s*nil\s*\))"
 )
 
-_CSG_TLAM_SHIP_ASSIGN_CALL = rf"(?:{_ASSIGN_TLAM_SHOOTER_CALL}|{_APPLY_NAVAL_TLAM_CALL}|{_DETACHED_TLAM_CALL})"
+_CSG_TLAM_SHIP_ASSIGN_CALL = (
+    rf"(?:{_GROUPED_CSG_TLAM_CALL}|{_ASSIGN_TLAM_SHOOTER_CALL}|{_APPLY_NAVAL_TLAM_CALL}|{_DETACHED_TLAM_CALL})"
+)
 
 _CSG_ESCORT_VARS = ("ddg51", "ddg51_escort")
 
 _CSG_PATROL_MISSION = "csg station keeping"
 
-_CSG_ALLOWED_SHIP_STRIKE_MISSIONS = ("caribbean tlam salvo",)
+_CSG_ALLOWED_SHIP_STRIKE_MISSIONS = (
+    "caribbean tlam salvo",
+    "caribbean thunder strike",
+)
 
 _CSG_SHIP_MISSIONS_BREAKING_FORMATION = (
     "csg asw screen",

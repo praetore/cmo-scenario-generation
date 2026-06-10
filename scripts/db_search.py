@@ -567,12 +567,24 @@ def validate_scenario_air_loadouts(
     warnings.extend(grp_warnings)
     ok.extend(grp_ok)
 
+    esc_cov_errors, esc_cov_warnings, esc_cov_ok = _validate_strike_escort_coverage(
+        content, mission_map
+    )
+    errors.extend(esc_cov_errors)
+    warnings.extend(esc_cov_warnings)
+    ok.extend(esc_cov_ok)
+
     sead_time_errors, sead_time_warnings, sead_time_ok = _validate_sead_strike_launch_timing(
         content, mission_map
     )
     errors.extend(sead_time_errors)
     warnings.extend(sead_time_warnings)
     ok.extend(sead_time_ok)
+
+    isr_sead_errors, isr_sead_warnings, isr_sead_ok = _validate_isr_before_sead(content)
+    errors.extend(isr_sead_errors)
+    warnings.extend(isr_sead_warnings)
+    ok.extend(isr_sead_ok)
 
     db.close()
     return {"errors": errors, "warnings": warnings, "ok": ok}

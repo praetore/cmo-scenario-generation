@@ -58,8 +58,23 @@ def _pick_series_version(db, table, unit_id, series=None, version=None):
         return None
     return (series or db.series, version or db.version)
 
+def _classify_scenario_mission(mission_class, subtype):
+    mission_class = (mission_class or "").upper()
+    subtype = (subtype or "").upper()
+    if mission_class == "PATROL" and subtype == "SEAD":
+        return "sead"
+    if mission_class == "PATROL" and subtype == "AAW":
+        return "aaw"
+    if mission_class == "STRIKE":
+        return "strike"
+    if mission_class == "SUPPORT":
+        return "support"
+    return mission_class.lower() if mission_class else "unknown"
+
+
 def _parse_scenario_missions(content):
     missions = {}
+    lua_vars = _parse_lua_string_vars(content)
     typed_mission_pattern = re.compile(
         r"ScenEdit_AddMission\s*\(\s*'[^']*'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*"
         r"\{type='([^']+)'(?:,\s*zone=\{([^}]+)\})?\}\s*\)",
@@ -70,28 +85,26 @@ def _parse_scenario_missions(content):
         r"\{zone=\{([^}]+)\}\}\s*\)",
         re.IGNORECASE,
     )
+    flex_mission_pattern = re.compile(
+        r"ScenEdit_AddMission\s*\(\s*(?:'[^']*'|\w+)\s*,\s*(?:'([^']+)'|(\w+))\s*,\s*'([^']+)'\s*,\s*\{([^}]*)\}\s*\)",
+        re.IGNORECASE,
+    )
     for match in typed_mission_pattern.finditer(content):
         name = match.group(1)
-        mission_class = match.group(2).upper()
-        subtype = match.group(3).upper()
-        if mission_class == "PATROL" and subtype == "SEAD":
-            missions[name] = "sead"
-        elif mission_class == "PATROL" and subtype == "AAW":
-            missions[name] = "aaw"
-        elif mission_class == "STRIKE":
-            missions[name] = "strike"
-        elif mission_class == "SUPPORT":
-            missions[name] = "support"
-        else:
-            missions[name] = mission_class.lower()
+        missions[name] = _classify_scenario_mission(match.group(2), match.group(3))
     for match in zone_only_mission_pattern.finditer(content):
         name = match.group(1)
         if name not in missions:
-            mission_class = match.group(2).upper()
-            if mission_class == "SUPPORT":
-                missions[name] = "support"
-            else:
-                missions[name] = mission_class.lower()
+            missions[name] = _classify_scenario_mission(match.group(2), None)
+    for match in flex_mission_pattern.finditer(content):
+        name = _resolve_lua_mission_name(match.group(1) or match.group(2), lua_vars)
+        if not name or name in missions:
+            continue
+        block = match.group(4)
+        mission_class = match.group(3)
+        subtype_m = re.search(r"type\s*=\s*'([^']+)'", block, re.IGNORECASE)
+        subtype = subtype_m.group(1) if subtype_m else None
+        missions[name] = _classify_scenario_mission(mission_class, subtype)
     return missions
 
 def _parse_mission_zone_map(content):
@@ -691,12 +704,15 @@ def _parse_strike_land_target_coords(content, mission_map, striker_side="United 
     return coords
 
 def _parse_lua_timing_vars(content):
-    """strike_package_tot, tlam_launch_time, sead_package_takeoff from local assignments."""
+    """strike_package_tot, tlam_launch_time, sead_on_station_time from local assignments."""
     out = {}
     for key in (
         "strike_package_tot",
         "tlam_launch_time",
+        "sead_on_station_time",
+        "sead_escort_on_station_time",
         "sead_package_takeoff",
+        "isr_on_station_time",
         "strike_package_date",
         "cap_launch_time",
         "aew_launch_time",
@@ -1600,7 +1616,7 @@ def _parse_air_spawn_wing_specs(content):
     """Each spawn_air_wing row: side, count, aircraft_id, loadout_id, mission, escort."""
     specs = []
     wing_pattern = re.compile(
-        r"spawn_air_wing\s*\(\s*'([^']*)'\s*,\s*[^,]+,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'\s*,\s*[^)]*(?:,\s*(true|false))?\s*\)",
+        r"spawn_air_wing\s*\(\s*'([^']*)'\s*,\s*[^,]+,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'\s*,\s*[^,]+(?:\s*,\s*(true|false))?\s*\)",
         re.IGNORECASE,
     )
     for match in wing_pattern.finditer(content):
@@ -1650,7 +1666,14 @@ def _parse_ship_strike_assignments(content, mission_map):
     tlam_m = re.search(
         r"local\s+TLAM_STRIKE_MISSION\s*=\s*'([^']+)'", content, re.IGNORECASE
     )
-    tlam_name = tlam_m.group(1) if tlam_m else "Caribbean TLAM Salvo"
+    air_m = re.search(
+        r"local\s+STRIKE_AIR_MISSION\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    tlam_name = (
+        tlam_m.group(1)
+        if tlam_m
+        else (air_m.group(1) if air_m else "Caribbean TLAM Salvo")
+    )
     scenario_only = content.split("-- [preflight: scenario_bootstrap.lua]")[0]
     for match in re.finditer(
         r"(?<!function\s)assign_tlam_shooter\s*\(\s*(\w+)\s*(?:,\s*\w+\s*)?\)",
@@ -1669,6 +1692,51 @@ def _parse_ship_strike_assignments(content, mission_map):
         ship_var = match.group(1)
         if ship_var.lower() not in ("ship_unit", "cg_unit"):
             rows.append((ship_var, tlam_name))
+    for match in re.finditer(
+        rf"setup_tlam_on_air_strike\s*\(\s*(\w+)\s*\)",
+        scenario_only,
+        re.IGNORECASE,
+    ):
+        ship_var = match.group(1)
+        if ship_var.lower() not in ("ship_unit", "cg_unit"):
+            air_name = air_m.group(1) if air_m else tlam_name
+            rows.append((ship_var, air_name))
+    for match in re.finditer(
+        rf"setup_csg_tlam_on_air_strike\s*\(\s*(\w+)\s*,\s*\w+\s*\)",
+        scenario_only,
+        re.IGNORECASE,
+    ):
+        ship_var = match.group(1)
+        if ship_var.lower() not in ("ship_unit", "cg_unit"):
+            air_name = air_m.group(1) if air_m else tlam_name
+            rows.append((ship_var, air_name))
+    csg_strike_inline = re.search(
+        r"setup_csg_strike_on_air_strike\s*\(\s*\w+\s*,\s*\{([^}]+)\}\s*\)",
+        scenario_only,
+        re.IGNORECASE | re.DOTALL,
+    )
+    csg_strike_vars = []
+    if csg_strike_inline:
+        csg_strike_vars = re.findall(r"\b(\w+)\b", csg_strike_inline.group(1))
+    elif re.search(
+        r"setup_csg_strike_on_air_strike\s*\(\s*\w+\s*,\s*(\w+)\s*\)",
+        scenario_only,
+        re.IGNORECASE,
+    ):
+        list_m = re.search(
+            r"for\s+_\s*,\s*hull\s+in\s+ipairs\s*\(\s*\{([^}]+)\}\s*\)",
+            scenario_only,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if list_m:
+            csg_strike_vars = re.findall(r"\b(\w+)\b", list_m.group(1))
+    if csg_strike_vars:
+        air_name = air_m.group(1) if air_m else tlam_name
+        for ship_var in csg_strike_vars:
+            if ship_var.lower() in ("hull", "ship_unit", "cg_unit"):
+                continue
+            if re.search(rf"\blocal\s+{re.escape(ship_var)}\s*=", content, re.IGNORECASE):
+                rows.append((ship_var, air_name))
     for match in re.finditer(
         rf"finalize_detached_tlam_shooter\s*\(\s*\w+\s*,\s*(\w+)",
         scenario_only,
@@ -1729,6 +1797,7 @@ def _parse_annotation_kv_blob(blob):
         "takeoff",
         "minutes_before_strike_tot",
         "launch",
+        "tot",
     )
     key_pattern = "|".join(known_keys)
     for match in re.finditer(rf"({key_pattern})=([^#]+?)(?=\s+(?:{key_pattern})=|$)", blob):
@@ -1738,7 +1807,7 @@ def _parse_annotation_kv_blob(blob):
     return kv
 
 def _parse_naval_package_annotations(content):
-    """@naval_package — timed TLAM / surface strike launch vs air strike TOT."""
+    """@naval_package — timed TLAM / naval strike asset launch vs unified strike package TOT."""
     packages = []
     for line in content.splitlines():
         if "@naval_package" not in line.lower():
@@ -1772,6 +1841,15 @@ def _parse_strike_package_annotations(content):
         blob = line.split("@strike_wave", 1)[-1]
         waves.append(_parse_annotation_kv_blob(blob))
     return packages, waves
+
+def _merge_strike_package_annotations(packages):
+    """Combine split -- @strike_package comment lines into one key/value map."""
+    merged = {}
+    for pkg in packages:
+        for key, value in pkg.items():
+            if value:
+                merged[key] = value
+    return merged
 
 def _parse_lua_string_vars(content):
     """local name = 'value' string assignments."""
@@ -1940,9 +2018,28 @@ def _parse_mission_schedule_settings(content):
             if resolved:
                 row[key] = resolved
     settings.update(_parse_sead_timed_mission_loop(content))
+    settings.update(_parse_isr_on_station_schedule(content))
     settings.update(_parse_naval_timed_mission_loop(content))
     settings.update(_parse_bootstrap_naval_schedule(content))
     return settings
+
+def _parse_isr_on_station_schedule(content):
+    """ISR Support on-station via set_patrol_on_station_schedule (CreateMissionFlightPlan TIMEONTARGET)."""
+    date_m = re.search(r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    isr_station_m = re.search(
+        r"local\s+isr_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    if not (date_m and isr_station_m):
+        return {}
+    if not re.search(
+        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR Orbit",
+        content,
+        re.IGNORECASE,
+    ):
+        return {}
+    date = date_m.group(1)
+    station = isr_station_m.group(1)
+    return {"Caribbean ISR Orbit": {"time_on_target": f"{date} {station}"}}
 
 def _parse_bootstrap_naval_schedule(content):
     """TLAM schedule via sync_naval_strike_tot / apply_naval_strike_flight_plan (not inline SetMission)."""
@@ -1952,10 +2049,12 @@ def _parse_bootstrap_naval_schedule(content):
     date = timing.get("strike_package_date")
     launch = timing.get("tlam_launch_time")
     tot = timing.get("strike_package_tot")
-    if not (date and launch and tot):
+    if not (date and tot):
         return {}
     if not re.search(
-        r"(?:apply_naval_strike_flight_plan\s*\(|(?<!function\s)sync_naval_strike_tot\s*\()",
+        r"(?:apply_naval_strike_flight_plan\s*\(|(?<!function\s)sync_naval_strike_tot\s*\(|"
+        r"setup_solo_tlam_shooter\s*\(|setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(|"
+        r"setup_csg_strike_on_air_strike\s*\()",
         content,
         re.IGNORECASE,
     ):
@@ -1970,43 +2069,72 @@ def _parse_bootstrap_naval_schedule(content):
             mission = naval_pkgs[0].get("mission")
     if not mission:
         mission = "Caribbean TLAM Salvo"
-    launch_dt = f"{date} {launch}"
     tot_dt = f"{date} {tot}"
-    return {
-        mission: {
-            "starttime": launch_dt,
-            "takeoff_time": launch_dt,
-            "time_on_target": tot_dt,
-        }
-    }
+    row = {"time_on_target": tot_dt}
+    if launch:
+        launch_dt = f"{date} {launch}"
+        row["starttime"] = launch_dt
+        row["takeoff_time"] = launch_dt
+    return {mission: row}
 
 def _parse_sead_timed_mission_loop(content):
     """Variable-based SEAD delay loop: for _, sead_mission in ipairs(sead_timed_missions)."""
     date_m = re.search(r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    station_m = re.search(r"local\s+sead_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE)
     takeoff_m = re.search(r"local\s+sead_package_takeoff\s*=\s*'([^']+)'", content, re.IGNORECASE)
     list_m = re.search(
-        r"local\s+sead_timed_missions\s*=\s*\{([^}]+)\}",
+        r"local\s+sead_(?:timed|shooter)_missions\s*=\s*\{([^}]+)\}",
         content,
         re.IGNORECASE | re.DOTALL,
     )
-    if not (date_m and takeoff_m and list_m):
+    if not (date_m and list_m):
         return {}
     if not re.search(
-        r"for\s+_\s*,\s*sead_mission\s+in\s+ipairs\s*\(\s*sead_timed_missions\s*\)",
+        r"for\s+_\s*,\s*sead_mission\s+in\s+ipairs\s*\(\s*sead_(?:timed|shooter)_missions\s*\)",
         content,
         re.IGNORECASE,
     ):
         return {}
-    if not re.search(
+    shooter_missions = re.findall(r"'([^']+)'", list_m.group(1))
+    escort_list_m = re.search(
+        r"local\s+sead_escort_missions\s*=\s*\{([^}]+)\}",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    escort_station_m = re.search(
+        r"local\s+sead_escort_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    escort_missions = (
+        re.findall(r"'([^']+)'", escort_list_m.group(1)) if escort_list_m else []
+    )
+    escort_station = escort_station_m.group(1) if escort_station_m else None
+    date = date_m.group(1)
+    if station_m and re.search(
+        r"set_patrol_on_station_schedule\s*\([\s\S]*?sead_on_station_dt",
+        content,
+        re.IGNORECASE,
+    ):
+        station = station_m.group(1)
+        result = {m: {"time_on_target": f"{date} {station}"} for m in shooter_missions}
+        if escort_missions and escort_station and re.search(
+            r"for\s+_\s*,\s*escort_mission\s+in\s+ipairs\s*\(\s*sead_escort_missions\s*\)",
+            content,
+            re.IGNORECASE,
+        ):
+            for em in escort_missions:
+                result[em] = {"time_on_target": f"{date} {escort_station}"}
+        return result
+    if takeoff_m and re.search(
         r"ScenEdit_SetMission\s*\([\s\S]*?starttime\s*=\s*sead_launch_dt",
         content,
         re.IGNORECASE,
     ):
-        return {}
-    takeoff = takeoff_m.group(1)
-    launch_dt = f"{date_m.group(1)} {takeoff}"
-    missions = re.findall(r"'([^']+)'", list_m.group(1))
-    return {m: {"starttime": launch_dt, "takeoff_time": launch_dt} for m in missions}
+        takeoff = takeoff_m.group(1)
+        launch_dt = f"{date} {takeoff}"
+        return {
+            m: {"starttime": launch_dt, "takeoff_time": launch_dt} for m in shooter_missions
+        }
+    return {}
 
 def _parse_naval_timed_mission_loop(content):
     """ScenEdit_SetMission for Caribbean TLAM Salvo-style blocks with tlam_launch_dt."""
@@ -2122,15 +2250,16 @@ def _parse_scenario_start_time(content):
     return _normalize_date_key(start_date), start_time
 
 def _parse_set_mission_strike_flight_settings(content):
-    """mission_name -> strike/escort flight-size options from ScenEdit_SetMission."""
+    """mission_name -> strike/escort flight-size options from SetMission / configure_strike_mission_options."""
     settings = {}
+    lua_vars = _parse_lua_string_vars(content)
     pattern = re.compile(
-        r"ScenEdit_SetMission\s*\(\s*'[^']*'\s*,\s*'([^']+)'\s*,\s*\{([^}]*)\}",
+        r"(?:ScenEdit_SetMission|configure_strike_mission_options)\s*\(\s*(?:'[^']*'|\w+)\s*,\s*(?:'([^']+)'|(\w+))\s*,\s*\{([^}]*)\}",
         re.IGNORECASE | re.DOTALL,
     )
     for match in pattern.finditer(content):
-        mission = match.group(1)
-        block = match.group(2)
+        mission = _resolve_lua_mission_name(match.group(1) or match.group(2), lua_vars)
+        block = match.group(3)
         row = settings.setdefault(mission, {})
         for src_key, dst_key in (
             ("StrikeUseFlightSize", "strike_use_flight_size"),
@@ -2156,6 +2285,22 @@ def _parse_set_mission_strike_flight_settings(content):
                 if bool_val is not None:
                     row[dst_key] = bool_val
     return settings
+
+def _strike_air_counts_by_mission(content, mission_map):
+    """Per strike mission: striker/escort counts from all spawn_air_wing rows."""
+    strike_missions = {name for name, role in mission_map.items() if role == "strike"}
+    counts = {}
+    for spec in _parse_air_spawn_wing_specs(content):
+        mission = spec["mission"]
+        if mission not in strike_missions:
+            continue
+        bucket = counts.setdefault(mission, {"strikers": 0, "escorts": 0})
+        if spec["escort"]:
+            bucket["escorts"] += spec["count"]
+        else:
+            bucket["strikers"] += spec["count"]
+    return counts
+
 
 def _carrier_air_counts_by_mission(content):
     """Per strike mission: carrier-based striker/escort counts from spawn_air_wing on carrier.guid."""

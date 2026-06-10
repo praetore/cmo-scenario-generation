@@ -53,6 +53,8 @@
 --     assert_db_series(year, expected) e.g. assert_db_series(2026, 'DB3K')
 --     mission_schedule_date('2026/06/01')       → '2026.06.01'
 --     mission_schedule_datetime(date, '06:30:00')
+--     minutes_from_hms / hms_from_minutes / hms_subtract_minutes   clock math for ISR→SEAD sequencing
+--     add_mission_schedule_restore_event(opts)   ScenLoaded + Time — re-apply starttime/TakeOffTime at Play
 --
 --   Spawn (nil + ERROR print on failure; place_ship/place_sub check elevation)
 --     place_base(side, name, lat, lon)   generic airfield dbid from state.BASE_FACILITY_DBID
@@ -68,23 +70,27 @@
 --
 --   Strike timing (hardcoded — no sync_* in scenarios; see RECIPES)
 --     strike_schedule_datetimes()      { tot, tlam_launch } from cmo.state date + HH:MM:SS locals
---     set_naval_strike_schedule()      one SetMission after CG assign (starttime + TimeOnTargetStation)
---     setup_solo_tlam_shooter(cg)      assign CG → set_naval_strike_schedule → weapon policy (no naval flight plan)
---     setup_solo_tlam_shooter(cg)      apply_naval(cg, nil) — CG never in CSG group
+--     set_patrol_on_station_schedule(side, mission, station_dt, opts)  SEAD/ISR: CreateMissionFlightPlan TIMEONTARGET
+--     set_strike_tot_schedule(side, mission, tot_dt, opts)  Strike TOT: flight plan + wrapper TimeOnTargetStation + fatal verify
+--     set_naval_strike_schedule()      unified strike package TOT/launch after ship assign (uses set_strike_tot_schedule)
+--     setup_csg_strike_on_air_strike(group, {cvn,ddg,cg,...})  preferred — unify naval strike assets on package mission + launch/TOT + gun policy
+--     setup_solo_tlam_shooter(cg)      legacy solo CG — assign → set_naval_strike_schedule → weapon policy (no naval flight plan)
 --     ungroup_unit(ship, side?)        only if already in a surface group — never on solo ships (group='none' creates a spurious ORBAT group)
 --     verify_solo_tlam_shooter(cg)     log OK/WARNING if still in a surface group
---     finalize_strike_air_after_flight_plan()  updateWPtimes + restore ALL spawned air (never SetMission on air strike)
+--     finalize_strike_air_after_flight_plan()  updateWPtimes + restore ALL spawned air (never SetMission on strike package)
 --     restore_all_spawned_air_assignments()    re-run after TLAM/naval CreateMissionFlightPlan (clears strike ORBAT)
 --     add_strike_assign_restore_event(opts)     ScenLoaded + Time events re-assign strike ORBAT at Play (after CAP/SEAD launch)
+--     verify_mission_schedule(side, mission, expected, opts)  GetMission check; error() aborts init on mismatch (opts.fatal=false to soften)
 --     verify_spawned_air_assignments(mission?)   log WARNING if any spawned aircraft still unassigned
 --     configure_strike_mission_options(side, mission, opts)  call before spawn_air_wing (SetMission clears assignments)
 --
---   CSG + TLAM
---     form_csg_group(group_name, cvn_lead, {ddg, ...})   **CVN + DDGs only** — CG TLAM shooter stays solo
+--   Strike package + TLAM
+--     form_csg_group(group_name, cvn_lead, {ddg, cg, ...})   CSG formation; setup_csg_strike_on_air_strike unifies naval assets on package mission
 --     assign_csg_group_missions(group, lead, patrol_mission, strike_unit, strike_mission, side?)
 --       Patrol on LEAD only — never AssignUnitToMission(group_name, patrol).
 --     setup_solo_tlam_shooter(cg_unit)                  preferred: CG not in any surface group
---     configure_tlam_shooter_weapon_policy(cg)          guns: no land; surface self-defence only; no hunt
+--     configure_strike_ship_weapon_policy(ship)       auto via assign_ship_to_mission on Strike missions
+--     add_strike_ship_weapon_policy_event(ship)     Play-time WRA refresh for strike ships
 --     assign_tlam_shooter(cg_unit, group_name?)          thin wrapper → assign_ship_to_mission
 --     finalize_detached_tlam_shooter(cvn, cg, {ddgs}, CSG_GROUP, patrol?)  legacy (regroups CVN+DDGs, CG solo)
 --     finalize_csg_tlam(cvn, cg, {ddgs}, CSG_GROUP, patrol)  **legacy grouped CG** — ME schedule often empty
@@ -98,15 +104,16 @@
 --     weapon_name_is_nuclear(name)  fallback when dbid unknown at runtime
 --     conventional_tlam_dbid()  strip_nuclear_from_unit(unit)  after place_ship on CSG
 --
--- RECIPE — CSG + solo TLAM (worked example: skills_cmo.md §9; scenarios live in generated/ and are gitignored)
---   1. Two Strike missions: air strike + naval TLAM (both type Land, OnDeactivateUassign=false)
---   2. form_csg_group(CSG_GROUP, cvn, {ddg1, ddg2}) — **no CG**; spawn CG before grouping (never add to CSG group)
---   3. Optional: assign_csg_group_missions(..., patrol on CVN lead only) — omit CSG Station Keeping if CG ME conflict
---   … air flight plan → finalize_strike_air_after_flight_plan() → CVN AEW/CAP/SEAD SetMission (cap after SEAD time) → restore strike assign …
---   7. setup_solo_tlam_shooter(cg) — no ScenEdit events; schedule via set_naval_strike_schedule at init
---   Naval strike: **no** CreateMissionFlightPlan (clears ME TOT for ship-only strikes). Schedule via sync_naval_strike_tot only.
+-- RECIPE — unified strike package with naval TLAM (preferred; skills_cmo.md §9)
+--   1. One Strike mission = strike package (Land, OnDeactivateUassign=false); configure_strike_timing air_mission / naval_mission may name the same mission
+--   2. form_csg_group(CSG_GROUP, cvn, {ddg1, ddg2, cg}) — full CSG in formation
+--   3. Optional: assign_csg_group_missions(..., patrol on CVN lead only) — never AssignUnitToMission(group_name, patrol)
+--   … air CreateMissionFlightPlan → finalize_strike_air_after_flight_plan() → CVN AEW/CAP/SEAD SetMission → restore strike assign …
+--   7. setup_csg_strike_on_air_strike(CSG_GROUP, {cvn, ddg, cg, …}) — unify naval strike assets; launch+TOT via set_naval_strike_schedule; gun policy per hull
+--   8. restore_all_spawned_air_assignments() + add_strike_assign_restore_event() for Play-time ORBAT
+--   Naval: **no** CreateMissionFlightPlan on ship-only strike. Legacy solo CG: setup_solo_tlam_shooter(cg).
 --
--- RECIPE — air strike only (no TLAM)
+-- RECIPE — strike package, aircraft only (no TLAM)
 --   configure_strike_timing without naval_mission; skip apply_naval / add_tlam_* ;
 --   use steps 6–7 only for carrier/land strike package.
 --
@@ -123,7 +130,7 @@
 --     "Couldn't find the mission <guid>" even when the name works.
 --   • ScenEdit_SetUnit({ group = ... }): use a **name string** to join a group. Do **not** set group='none' on ships that were never grouped — CMO creates an ORBAT group literally named "none". Use group='none' only via ungroup_unit() when leaving an existing group.
 --   • CMO cannot dofile external files — use embed_bootstrap.py for import.
---   • ScenEdit_SetMission on an air Strike after aircraft are assigned clears every unit on that mission — configure strike options before spawn_air_wing; air TOT via CreateMissionFlightPlan only.
+--   • ScenEdit_SetMission on the strike package after aircraft are assigned clears every unit on that mission — configure strike options before spawn_air_wing; package TOT via CreateMissionFlightPlan only.
 --   • CG in surface group + TLAM Strike: ME launch/TOT often empty — use setup_solo_tlam_shooter (group='').
 --   • AssignUnitToMission on CG clears GetMission starttime/TOT at import — sync after assign via set_naval_strike_schedule.
 --   • SEAD = Patrol type SEAD, not Strike; set starttime/TakeOffTime before strike TOT.
@@ -143,10 +150,35 @@ M.state = {
     tlam_launch_time = nil,
     STRIKE_AIR_MISSION = nil,
     TLAM_STRIKE_MISSION = nil,
+    strike_mission_names = {},
     scenario_year = nil,
     nuclear_weapons_allowed = false,
     conventional_tlam_dbid = nil,
 }
+
+function M.register_strike_mission(mission_name)
+    if mission_name and mission_name ~= '' then
+        M.state.strike_mission_names[mission_name] = true
+    end
+end
+
+function M._is_strike_ship_mission(mission_name)
+    if not mission_name or mission_name == '' then
+        return false
+    end
+    if M.state.strike_mission_names[mission_name] then
+        return true
+    end
+    local side = M.state.strike_side or 'United States'
+    local m = ScenEdit_GetMission(side, mission_name)
+    if m then
+        local t = tostring(m.type or m.missiontype or m.missionType or '')
+        if string.lower(t) == 'strike' then
+            return true
+        end
+    end
+    return false
+end
 
 function M.configure_strike_timing(cfg)
     if not cfg then
@@ -158,6 +190,8 @@ function M.configure_strike_timing(cfg)
     M.state.STRIKE_AIR_MISSION = cfg.air_mission or M.state.STRIKE_AIR_MISSION
     M.state.TLAM_STRIKE_MISSION = cfg.naval_mission or M.state.TLAM_STRIKE_MISSION
     M.state.strike_side = cfg.side or M.state.strike_side
+    M.register_strike_mission(M.state.STRIKE_AIR_MISSION)
+    M.register_strike_mission(M.state.TLAM_STRIKE_MISSION)
 end
 
 function M.mission_schedule_date(date_slash)
@@ -166,6 +200,27 @@ end
 
 function M.mission_schedule_datetime(date_slash, time_hms)
     return M.mission_schedule_date(date_slash) .. ' ' .. time_hms
+end
+
+function M.minutes_from_hms(time_hms)
+    local h, m, s = tostring(time_hms):match('^(%d+):(%d+):(%d+)$')
+    if not h then
+        return nil
+    end
+    return tonumber(h) * 60 + tonumber(m) + (tonumber(s) or 0) / 60
+end
+
+function M.hms_from_minutes(minutes)
+    local mins = math.max(0, math.floor((minutes or 0) + 0.5))
+    return string.format('%02d:%02d:00', math.floor(mins / 60) % 24, mins % 60)
+end
+
+function M.hms_subtract_minutes(time_hms, delta_minutes)
+    local base = M.minutes_from_hms(time_hms)
+    if not base then
+        return time_hms
+    end
+    return M.hms_from_minutes(base - (delta_minutes or 0))
 end
 
 -- scenario_date 'YYYY/MM/DD' → ScenEdit_SetTime (dateformat YYYYMMDD; StartDate DD.MM.YYYY per API)
@@ -305,6 +360,13 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
     if not ship_unit or not ship_unit.guid or not mission_name then
         return false
     end
+    side = side or M.state.strike_side or 'United States'
+    local function done(result)
+        if result and M._is_strike_ship_mission(mission_name) then
+            M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
+        end
+        return result
+    end
     local mission_guid = M.resolve_mission_guid(side, mission_name)
     local function assigned()
         local u = ScenEdit_GetUnit({ guid = ship_unit.guid })
@@ -345,20 +407,20 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
             ScenEdit_AssignUnitToMission(uref, mission_name)
         end
         if assigned() then
-            return true
+            return done(true)
         end
         ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, mission = mission_name })
         if assigned() then
-            return true
+            return done(true)
         end
         local u_wrap = ScenEdit_GetUnit({ guid = ship_unit.guid })
         if u_wrap then
             u_wrap.mission = mission_name
             if assigned() then
-                return true
+                return done(true)
             end
         end
-        return assigned()
+        return done(assigned())
     end
 
     -- Grouped (legacy): AssignUnitToMission then group-only SetUnit — never mission+group in one SetUnit.
@@ -368,13 +430,13 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
         end
         if assigned() then
             ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, group = grp })
-            return assigned()
+            return done(assigned())
         end
     end
 
     ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, mission = mission_name })
     if assigned() then
-        return true
+        return done(true)
     end
 
     for _, uref in ipairs(unit_refs) do
@@ -382,7 +444,7 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
             if grp and grp ~= '' then
                 ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, group = grp })
             end
-            return true
+            return done(true)
         end
     end
 
@@ -390,7 +452,7 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
     if u_wrap then
         u_wrap.mission = mission_name
         if assigned() then
-            return true
+            return done(true)
         end
     end
 
@@ -399,19 +461,19 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
         ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, mission = mission_name })
         if assigned() then
             ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, group = grp })
-            return assigned()
+            return done(assigned())
         end
         for _, uref in ipairs(unit_refs) do
             ScenEdit_AssignUnitToMission(uref, mission_name)
         end
         if assigned() then
             ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, group = grp })
-            return assigned()
+            return done(assigned())
         end
         ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, group = grp })
     end
 
-    return assigned()
+    return done(assigned())
 end
 
 function M.refresh_spawned_air_assignments(mission_filter)
@@ -443,25 +505,252 @@ end
 
 function M.strike_schedule_datetimes()
     local date = M.state.strike_package_date
-    return {
+    local sched = {
         tot = M.mission_schedule_datetime(date, M.state.strike_package_tot),
-        tlam_launch = M.mission_schedule_datetime(date, M.state.tlam_launch_time),
+        tlam_launch = nil,
     }
+    if M.state.tlam_launch_time then
+        sched.tlam_launch = M.mission_schedule_datetime(date, M.state.tlam_launch_time)
+    end
+    return sched
+end
+
+function M._station_schedule_parts(station_dt, opts)
+    opts = opts or {}
+    local date_slash = opts.date or M.state.strike_package_date
+    local time_hms = opts.station_time_hms
+    if station_dt then
+        if not time_hms then
+            time_hms = station_dt:match('%s(%d+:%d+:%d+)$')
+        end
+        if not date_slash then
+            local date_dot = station_dt:match('^(%d+%.%d+%.%d+)')
+            if date_dot then
+                date_slash = date_dot:gsub('%.', '/')
+            end
+        end
+    end
+    return date_slash, time_hms
+end
+
+function M._cmo_wrapper_datetime(date_slash, time_hms)
+    local y, mo, d = date_slash:match('(%d+)/(%d+)/(%d+)')
+    if not y then
+        return nil
+    end
+    return string.format('%s.%s.%s %s', tonumber(d), tonumber(mo), y, time_hms)
+end
+
+function M._mission_is_support(m)
+    if not m then
+        return false
+    end
+    local t = string.lower(tostring(m.typeS or m.type or ''))
+    return t:find('support', 1, true) ~= nil
+end
+
+function M._apply_on_station_times(side, mission_name, date_slash, time_hms, opts)
+    opts = opts or {}
+    local station_dt = M.mission_schedule_datetime(date_slash, time_hms)
+    local wrapper_dt = M._cmo_wrapper_datetime(date_slash, time_hms)
+    local takeoff_hms = opts.takeoff_time_hms
+    if not takeoff_hms and opts.transit_minutes then
+        takeoff_hms = M.hms_subtract_minutes(time_hms, opts.transit_minutes)
+    end
+    local takeoff_dt = takeoff_hms and M.mission_schedule_datetime(date_slash, takeoff_hms)
+    local takeoff_wrapper = takeoff_hms and M._cmo_wrapper_datetime(date_slash, takeoff_hms)
+
+    local set_opts = {
+        TimeOnTargetStation = wrapper_dt or station_dt,
+        OnDeactivateUassign = opts.on_deactivate_unassign == true,
+        isactive = opts.isactive ~= false,
+    }
+    if opts.use_flight_size ~= false then
+        set_opts.UseFlightSize = true
+        set_opts.FlightSize = opts.flight_size or 2
+        if opts.min_aircraft_req then
+            set_opts.MinAircraftReq = opts.min_aircraft_req
+        end
+    end
+    if takeoff_dt then
+        set_opts.starttime = takeoff_wrapper or takeoff_dt
+        set_opts.TakeOffTime = takeoff_wrapper or takeoff_dt
+    end
+    ScenEdit_SetMission(side, mission_name, set_opts)
+    local m = ScenEdit_GetMission(side, mission_name)
+    if m then
+        m.TimeOnTargetStation = wrapper_dt or station_dt
+        if takeoff_wrapper then
+            m.starttime = takeoff_wrapper
+            m.TakeOffTime = takeoff_wrapper
+        end
+        pcall(function() m:updateWPtimes() end)
+        m = ScenEdit_GetMission(side, mission_name)
+    end
+    return m, takeoff_hms
+end
+
+function M._apply_strike_tot_times(side, mission_name, date_slash, tot_hms, opts)
+    opts = opts or {}
+    local tot_dt = M.mission_schedule_datetime(date_slash, tot_hms)
+    local wrapper_dt = M._cmo_wrapper_datetime(date_slash, tot_hms)
+    local launch_hms = opts.launch_hms
+    if not launch_hms and opts.launch_dt then
+        launch_hms = opts.launch_dt:match('(%d+:%d+:%d+)$')
+    end
+    local launch_dt = launch_hms and M.mission_schedule_datetime(date_slash, launch_hms)
+    local launch_wrapper = launch_hms and M._cmo_wrapper_datetime(date_slash, launch_hms)
+
+    local set_opts = {
+        TimeOnTargetStation = wrapper_dt or tot_dt,
+    }
+    if opts.on_deactivate_unassign ~= nil then
+        set_opts.OnDeactivateUassign = opts.on_deactivate_unassign
+    end
+    if opts.isactive ~= nil then
+        set_opts.isactive = opts.isactive
+    end
+    if launch_dt and not opts.wrapper_only then
+        set_opts.starttime = launch_wrapper or launch_dt
+        set_opts.TakeOffTime = launch_wrapper or launch_dt
+    end
+    if not opts.wrapper_only then
+        ScenEdit_SetMission(side, mission_name, set_opts)
+    end
+    local m = ScenEdit_GetMission(side, mission_name)
+    if m then
+        m.TimeOnTargetStation = wrapper_dt or tot_dt
+        if launch_wrapper and not opts.wrapper_only then
+            m.starttime = launch_wrapper
+            m.TakeOffTime = launch_wrapper
+        end
+        pcall(function() m:updateWPtimes() end)
+        m = ScenEdit_GetMission(side, mission_name)
+    end
+    return m
+end
+
+-- Strike package TOT: CreateMissionFlightPlan TIMEONTARGET + wrapper TimeOnTargetStation (fatal verify on TOT).
+function M.set_strike_tot_schedule(side, mission_name, tot_dt, opts)
+    opts = opts or {}
+    side = side or M.state.strike_side or 'United States'
+    mission_name = mission_name or M.state.STRIKE_AIR_MISSION
+    if not mission_name or not tot_dt then
+        return false
+    end
+    local date_slash = opts.date or M.state.strike_package_date
+    local tot_hms = opts.tot_hms or tot_dt:match('%s(%d+:%d+:%d+)$')
+    if not tot_hms then
+        M._abort_scenario_generation('Strike TOT — cannot parse tot_dt for ' .. tostring(mission_name))
+    end
+    if opts.launch_dt and not opts.launch_hms then
+        opts.launch_hms = opts.launch_dt:match('(%d+:%d+:%d+)$')
+    end
+
+    if not opts.skip_flight_plan and not opts.wrapper_only then
+        M._apply_strike_tot_times(side, mission_name, date_slash, tot_hms, opts)
+        local fp_opts = { DATEONTARGET = date_slash, TIMEONTARGET = tot_hms }
+        local m = ScenEdit_GetMission(side, mission_name)
+        local fp_ok = false
+        if m and m.createFlightPlans then
+            fp_ok = pcall(function() m:createFlightPlans(fp_opts) end)
+        end
+        if not fp_ok then
+            ScenEdit_CreateMissionFlightPlan(side, mission_name, fp_opts)
+        end
+    end
+    M._apply_strike_tot_times(side, mission_name, date_slash, tot_hms, opts)
+
+    if opts.verify ~= false then
+        M.verify_mission_schedule(side, mission_name, {
+            tot_hms = tot_hms,
+            launch_dt = opts.launch_dt,
+        }, {
+            label = mission_name .. ' strike TOT',
+            optional_fields = { 'starttime', 'takeoff' },
+        })
+    end
+    return true
+end
+
+-- Patrol/Support on-station: Patrol → CreateMissionFlightPlan TIMEONTARGET; Support → TAKEOFFTIME + wrapper TOS (land ISR).
+function M.set_patrol_on_station_schedule(side, mission_name, station_dt, opts)
+    opts = opts or {}
+    if not mission_name or not station_dt then
+        return false
+    end
+    side = side or M.state.strike_side or 'United States'
+    local date_slash, time_hms = M._station_schedule_parts(station_dt, opts)
+    if not date_slash or not time_hms then
+        M._abort_scenario_generation('Patrol on-station — cannot parse schedule for ' .. tostring(mission_name))
+    end
+
+    local m0 = ScenEdit_GetMission(side, mission_name)
+    local is_support = M._mission_is_support(m0)
+    if is_support and not opts.takeoff_time_hms and not opts.transit_minutes then
+        opts.transit_minutes = 90
+    end
+
+    local m, takeoff_hms = M._apply_on_station_times(side, mission_name, date_slash, time_hms, opts)
+
+    if is_support then
+        if takeoff_hms then
+            ScenEdit_CreateMissionFlightPlan(side, mission_name, {
+                TAKEOFFDATE = date_slash,
+                TAKEOFFTIME = takeoff_hms,
+            })
+            m, _ = M._apply_on_station_times(side, mission_name, date_slash, time_hms, opts)
+        end
+    else
+        local fp_opts = {
+            DATEONTARGET = date_slash,
+            TIMEONTARGET = time_hms,
+        }
+        local fp_ok = false
+        if m and m.createFlightPlans then
+            fp_ok = pcall(function() m:createFlightPlans(fp_opts) end)
+        end
+        if not fp_ok then
+            ScenEdit_CreateMissionFlightPlan(side, mission_name, fp_opts)
+        end
+        m, _ = M._apply_on_station_times(side, mission_name, date_slash, time_hms, opts)
+    end
+
+    if opts.verify ~= false then
+        M.verify_mission_schedule(side, mission_name, { tos_hms = time_hms }, {
+            label = mission_name .. ' on-station',
+            optional_fields = is_support and { 'starttime', 'takeoff' } or nil,
+        })
+    end
+    return true
+end
+
+function M._verify_field_optional(opts, field_name)
+    local names = opts.optional_fields
+    if not names then
+        return false
+    end
+    for _, name in ipairs(names) do
+        if name == field_name then
+            return true
+        end
+    end
+    return false
 end
 
 function M.set_naval_strike_schedule(side, mission_name, launch_dt, tot_dt)
     side = side or M.state.strike_side or 'United States'
     mission_name = mission_name or M.state.TLAM_STRIKE_MISSION
-    if not mission_name or not launch_dt or not tot_dt then
+    if not mission_name or not tot_dt then
         return false
     end
-    ScenEdit_SetMission(side, mission_name, {
-        starttime = launch_dt,
-        TimeOnTargetStation = tot_dt,
-        OnDeactivateUassign = false,
+    return M.set_strike_tot_schedule(side, mission_name, tot_dt, {
+        date = M.state.strike_package_date,
+        launch_dt = launch_dt,
+        on_deactivate_unassign = false,
         isactive = true,
+        skip_flight_plan = true,
     })
-    return true
 end
 
 -- Deprecated: scenarios use hardcoded strike_package_tot + set_naval_strike_schedule. Kept for legacy callers.
@@ -501,11 +790,18 @@ function M._assign_solo_tlam_shooter(side, ship_unit, mission_name)
     if m and m.unitlist then
         for _, ug in ipairs(m.unitlist) do
             if ug == ship_unit.guid then
+                if M._is_strike_ship_mission(mission_name) then
+                    M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
+                end
                 return true
             end
         end
     end
-    return M._unit_mission_label(u) ~= ''
+    local ok = M._unit_mission_label(u) ~= ''
+    if ok and M._is_strike_ship_mission(mission_name) then
+        M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
+    end
+    return ok
 end
 
 function M._naval_flight_plan_opts()
@@ -541,6 +837,163 @@ function M._mission_field_nonempty(value)
     end
     local s = tostring(value)
     return s ~= '' and s ~= 'nil'
+end
+
+-- Extract HH:MM:SS from Mission wrapper DateTime (starttime / TakeOffTime / TimeOnTargetStation).
+function M._normalize_mission_datetime(value)
+    if not M._mission_field_nonempty(value) then
+        return nil
+    end
+    return tostring(value):match('(%d+:%d+:%d+)')
+end
+
+function M._expected_schedule_hms(expected, keys)
+    if not expected then
+        return nil
+    end
+    for _, key in ipairs(keys) do
+        local raw = expected[key]
+        if raw and raw ~= '' then
+            local hms = tostring(raw):match('(%d+:%d+:%d+)$')
+            if hms then
+                return hms
+            end
+            return tostring(raw)
+        end
+    end
+    return nil
+end
+
+function M._abort_scenario_generation(reason)
+    print('ERROR: ' .. reason)
+    error(reason, 0)
+end
+
+-- Post-assignment check via ScenEdit_GetMission (Mission wrapper fields).
+-- expected: { tot_hms|tos_hms, starttime_hms|launch_dt, takeoff_hms|takeoff_dt }
+-- Default: fatal — mismatch aborts scenario Lua init via error().
+function M.verify_mission_schedule(side, mission_name, expected, opts)
+    opts = opts or {}
+    expected = expected or {}
+    side = side or M.state.strike_side or 'United States'
+    local fatal = opts.fatal ~= false
+    if not mission_name then
+        if fatal then
+            M._abort_scenario_generation('Mission schedule verify — mission_name required')
+        end
+        return false
+    end
+    local label = opts.label or mission_name
+    local m = ScenEdit_GetMission(side, mission_name)
+    if not m then
+        local msg = 'Mission schedule verify FAILED — GetMission nil for ' .. label
+        if fatal then
+            M._abort_scenario_generation(msg)
+        end
+        print('ERROR: ' .. msg)
+        return false
+    end
+
+    local issues = {}
+    local notes = {}
+    local ok_parts = {}
+
+    local exp_tos = M._expected_schedule_hms(expected, {
+        'tos_hms', 'tot_hms', 'time_on_target_station_hms',
+    })
+    if not exp_tos and expected.time_on_target_station_dt then
+        _, exp_tos = M._station_schedule_parts(expected.time_on_target_station_dt, expected)
+    end
+    if exp_tos then
+        local actual_raw = m.TimeOnTargetStation
+        local actual_hms = M._normalize_mission_datetime(actual_raw)
+        if not actual_hms then
+            table.insert(issues, 'TimeOnTargetStation empty (expected ' .. exp_tos .. ')')
+        elseif actual_hms ~= exp_tos then
+            table.insert(issues,
+                'TimeOnTargetStation=' .. tostring(actual_raw) .. ' (hms ' .. actual_hms .. ', expected ' .. exp_tos .. ')')
+        else
+            table.insert(ok_parts, 'TimeOnTargetStation=' .. tostring(actual_raw))
+        end
+    end
+
+    local exp_start = M._expected_schedule_hms(expected, { 'starttime_hms', 'launch_hms' })
+    if not exp_start and expected.launch_dt then
+        exp_start = expected.launch_dt:match('(%d+:%d+:%d+)$')
+    end
+    if exp_start then
+        local actual_raw = m.starttime
+        local actual_hms = M._normalize_mission_datetime(actual_raw)
+        if not actual_hms then
+            local msg = 'starttime empty (expected ' .. exp_start .. ')'
+            if M._verify_field_optional(opts, 'starttime') then
+                table.insert(notes, msg)
+            else
+                table.insert(issues, msg)
+            end
+        elseif actual_hms ~= exp_start then
+            local msg = 'starttime=' .. tostring(actual_raw) .. ' (hms ' .. actual_hms .. ', expected ' .. exp_start .. ')'
+            if M._verify_field_optional(opts, 'starttime') then
+                table.insert(notes, msg)
+            else
+                table.insert(issues, msg)
+            end
+        else
+            table.insert(ok_parts, 'starttime=' .. tostring(actual_raw))
+        end
+    end
+
+    local exp_takeoff = M._expected_schedule_hms(expected, { 'takeoff_hms' })
+    if not exp_takeoff and expected.takeoff_dt then
+        exp_takeoff = expected.takeoff_dt:match('(%d+:%d+:%d+)$')
+    end
+    if not exp_takeoff and exp_start and M._verify_field_optional(opts, 'takeoff') then
+        exp_takeoff = exp_start
+    end
+    if exp_takeoff then
+        local actual_raw = m.TakeOffTime
+        local actual_hms = M._normalize_mission_datetime(actual_raw)
+        if not actual_hms then
+            local msg = 'TakeOffTime empty (expected ' .. exp_takeoff .. ')'
+            if M._verify_field_optional(opts, 'takeoff') then
+                table.insert(notes, msg)
+            else
+                table.insert(issues, msg)
+            end
+        elseif actual_hms ~= exp_takeoff then
+            local msg = 'TakeOffTime=' .. tostring(actual_raw) .. ' (hms ' .. actual_hms .. ', expected ' .. exp_takeoff .. ')'
+            if M._verify_field_optional(opts, 'takeoff') then
+                table.insert(notes, msg)
+            else
+                table.insert(issues, msg)
+            end
+        else
+            table.insert(ok_parts, 'TakeOffTime=' .. tostring(actual_raw))
+        end
+    end
+
+    if #ok_parts == 0 and #issues == 0 and #notes == 0 then
+        print('NOTE: Mission schedule verify — ' .. label .. ': no expected fields to compare')
+        return true
+    end
+    if #issues > 0 then
+        local snapshot = 'GetMission snapshot — starttime=' .. tostring(m.starttime or '') ..
+            ' TakeOffTime=' .. tostring(m.TakeOffTime or '') ..
+            ' TimeOnTargetStation=' .. tostring(m.TimeOnTargetStation or '')
+        local msg = 'Mission schedule verify FAILED — ' .. label .. ': ' ..
+            table.concat(issues, '; ') .. ' | ' .. snapshot
+        if fatal then
+            M._abort_scenario_generation(msg)
+        end
+        print('ERROR: ' .. msg)
+        return false
+    end
+    local ok_msg = 'OK: Mission schedule verify — ' .. label .. ': ' .. table.concat(ok_parts, ', ')
+    if #notes > 0 then
+        ok_msg = ok_msg .. ' | NOTE: ' .. table.concat(notes, '; ')
+    end
+    print(ok_msg)
+    return true
 end
 
 function M._mission_starttime_set(m, expected)
@@ -626,8 +1079,8 @@ function M.ensure_naval_strike_me_schedule()
     return ok
 end
 
--- TLAM shooter weapon policy: Tomahawk for land strike; main gun never on land; surface gun
--- only when threatened (WCS HOLD + WRA self-defence); no opportunistic hunting.
+-- Strike-ship weapon policy (any surface unit on a Strike mission): standoff missiles only;
+-- main gun never on land; surface gun only when threatened (WCS HOLD + WRA self-defence).
 M.WRA_GUN_LAND_BLOCK = { 'none', 'none', 'none', 'none' }
 M.WRA_GUN_SURFACE_SELF_DEFENSE = { 'inherit', 'inherit', 'none', 'max' }
 
@@ -718,7 +1171,7 @@ function M._collect_strike_gun_weapon_dbids(unit_wrap)
     return dbids
 end
 
-function M._apply_tlam_shooter_gun_wra(unit_guid, side, gun_dbids)
+function M._apply_strike_ship_gun_wra(unit_guid, side, gun_dbids)
     local land_rules, surface_rules = 0, 0
     for dbid, _ in pairs(gun_dbids) do
         for _, target_type in ipairs(M.LAND_STRIKE_WRA_TARGET_TYPES) do
@@ -766,7 +1219,11 @@ function M.configure_naval_strike_doctrine(side)
     return true
 end
 
-function M.configure_tlam_shooter_weapon_policy(unit, opts)
+function M._apply_tlam_shooter_gun_wra(unit_guid, side, gun_dbids)
+    return M._apply_strike_ship_gun_wra(unit_guid, side, gun_dbids)
+end
+
+function M.configure_strike_ship_weapon_policy(unit, opts)
     opts = opts or {}
     if not unit or not unit.guid then
         return 0, 0
@@ -776,32 +1233,35 @@ function M.configure_tlam_shooter_weapon_policy(unit, opts)
     if not u then
         return 0, 0
     end
-    -- Land WCS stays inherited (TIGHT) so TLAM can engage assigned land targets; guns blocked via WRA.
+    -- Unit doctrine overrides shared strike mission (ShotgunOneEngagement* allows gun fallback when magazines spent).
+    -- Land WCS stays inherited so missiles can engage assigned targets; guns blocked via WRA + ShotgunBVR.
     ScenEdit_SetDoctrine({ side = side, guid = unit.guid }, {
+        weapon_state_planned = 'ShotgunBVR',
+        weapon_state_rtb = 'Winchester',
         engage_opportunity_targets = false,
         gun_strafing = 0,
         weapon_control_status_surface = 0,
         weapon_control_status_subsurface = 0,
     })
-    local land_rules, surface_rules = M._apply_tlam_shooter_gun_wra(
+    local land_rules, surface_rules = M._apply_strike_ship_gun_wra(
         unit.guid, side, M._collect_strike_gun_weapon_dbids(u))
     if land_rules > 0 or surface_rules > 0 then
         print('OK: ' .. tostring(u.name or unit.guid) ..
-            ' — TLAM shooter guns: land blocked (' .. land_rules ..
+            ' — strike ship guns: land blocked (' .. land_rules ..
             ' WRA), surface self-defence only (' .. surface_rules .. ' WRA)')
     end
     return land_rules, surface_rules
 end
 
-M.disable_strike_guns_on_unit = M.configure_tlam_shooter_weapon_policy
+M.configure_tlam_shooter_weapon_policy = M.configure_strike_ship_weapon_policy
+M.disable_strike_guns_on_unit = M.configure_strike_ship_weapon_policy
 
-function M.build_tlam_shooter_weapon_policy_script(ship_unit)
+function M.build_strike_ship_weapon_policy_script(ship_unit)
     if not ship_unit or not ship_unit.guid then
         return ''
     end
     local side = M._q_lua_str(M.state.strike_side or 'United States')
     local guid = ship_unit.guid
-    local mission = M._q_lua_str(M.state.TLAM_STRIKE_MISSION or '')
     local land_types, surface_types = {}, {}
     for _, t in ipairs(M.LAND_STRIKE_WRA_TARGET_TYPES) do
         table.insert(land_types, "'" .. M._q_lua_str(t) .. "'")
@@ -817,10 +1277,7 @@ function M.build_tlam_shooter_weapon_policy_script(ship_unit)
         '  local wra_surface = { "inherit", "inherit", "none", "max" }',
         '  local land_types = { ' .. table.concat(land_types, ', ') .. ' }',
         '  local surface_types = { ' .. table.concat(surface_types, ', ') .. ' }',
-        "  ScenEdit_SetDoctrine({side='" .. side .. "', guid='" .. guid .. "'}, {engage_opportunity_targets=false, gun_strafing=0, weapon_control_status_surface=0, weapon_control_status_subsurface=0})",
-        "  if '" .. mission .. "' ~= '' then",
-        "    ScenEdit_SetDoctrine({side='" .. side .. "', mission='" .. mission .. "'}, {weapon_state_planned='ShotgunBVR', weapon_state_rtb='Winchester', gun_strafing=0, engage_opportunity_targets=false})",
-        '  end',
+        "  ScenEdit_SetDoctrine({side='" .. side .. "', guid='" .. guid .. "'}, {weapon_state_planned='ShotgunBVR', weapon_state_rtb='Winchester', engage_opportunity_targets=false, gun_strafing=0, weapon_control_status_surface=0, weapon_control_status_subsurface=0})",
         '  for _, mount in ipairs(u.mounts) do',
         '    local mn = mount.name and string.upper(tostring(mount.name)) or ""',
         '    local is_gun = false',
@@ -845,9 +1302,186 @@ function M.build_tlam_shooter_weapon_policy_script(ship_unit)
     }, '\r\n')
 end
 
-M.build_disable_strike_guns_script = M.build_tlam_shooter_weapon_policy_script
+M.build_tlam_shooter_weapon_policy_script = M.build_strike_ship_weapon_policy_script
+M.build_disable_strike_guns_script = M.build_strike_ship_weapon_policy_script
 
--- CG 52 solo op Caribbean TLAM Salvo (niet in CSG-groep — CMO ME toont launch/TOT betrouwbaarder).
+-- Re-apply strike-ship gun block at Play (mission assign can reset unit WRA / weapon state).
+function M.add_strike_ship_weapon_policy_event(ship_unit, opts)
+    opts = opts or {}
+    if not ship_unit or not ship_unit.guid then
+        return false
+    end
+    local script = M.build_strike_ship_weapon_policy_script(ship_unit)
+    if script == '' then
+        return false
+    end
+    local base_event = opts.event_name or ('Strike ship gun policy ' .. tostring(ship_unit.name or ship_unit.guid))
+    local start_date = opts.start_date or M.state.strike_package_date
+    local refresh_times = opts.refresh_times
+    if not refresh_times then
+        refresh_times = { '00:00:05' }
+        if M.state.tlam_launch_time then
+            table.insert(refresh_times, M.state.tlam_launch_time)
+        end
+    end
+
+    for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
+        local label = base_event .. suffix
+        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    end
+    for i = 1, #refresh_times do
+        local label = base_event .. ' (time ' .. i .. ')'
+        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    end
+
+    local function register_event(event_label, trigger_name, trigger_def)
+        local action_name = event_label .. ' action'
+        ScenEdit_SetTrigger(trigger_def)
+        ScenEdit_SetAction({
+            mode = 'add',
+            type = 'LuaScript',
+            name = action_name,
+            ScriptText = script,
+        })
+        ScenEdit_SetEvent(event_label, {
+            mode = 'add',
+            Description = event_label,
+            IsActive = true,
+            IsRepeatable = false,
+            IsShown = true,
+        })
+        ScenEdit_SetEventTrigger(event_label, { mode = 'add', name = trigger_name })
+        ScenEdit_SetEventAction(event_label, { mode = 'add', name = action_name })
+    end
+
+    register_event(base_event .. ' (load)', base_event .. ' load trigger', {
+        mode = 'add',
+        type = 'ScenLoaded',
+        name = base_event .. ' load trigger',
+    })
+
+    local time_labels = {}
+    for i, hhmmss in ipairs(refresh_times) do
+        local dt = M.mission_schedule_datetime(start_date, hhmmss)
+        local event_label = base_event .. ' (time ' .. i .. ')'
+        register_event(event_label, event_label .. ' trigger', {
+            mode = 'add',
+            type = 'Time',
+            name = event_label .. ' trigger',
+            Time = dt,
+        })
+        table.insert(time_labels, dt)
+    end
+    print('OK: Strike ship gun policy events for ' .. tostring(ship_unit.name) ..
+        ' — ScenLoaded + ' .. table.concat(time_labels, ', '))
+    return true
+end
+
+M.add_tlam_shooter_weapon_policy_event = M.add_strike_ship_weapon_policy_event
+
+-- Unify naval strike assets on the package Strike mission (in formation). All TLAM-capable hulls may fire; gun policy per hull.
+-- Function name is historical (STRIKE_AIR_MISSION); concept = strike asset unification, not "CSG joins air strike".
+function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
+    if not group_name or group_name == '' then
+        print('ERROR: setup_csg_strike_on_air_strike — group_name required')
+        return false
+    end
+    if not strike_ships or #strike_ships == 0 then
+        print('ERROR: setup_csg_strike_on_air_strike — no strike ships')
+        return false
+    end
+    local side = M.state.strike_side or 'United States'
+    local strike_mission = M.state.STRIKE_AIR_MISSION
+    if not strike_mission then
+        print('ERROR: setup_csg_strike_on_air_strike — STRIKE_AIR_MISSION not configured')
+        return false
+    end
+    local sched = M.strike_schedule_datetimes()
+    local ok_count, fail_count = 0, 0
+    for _, ship_unit in ipairs(strike_ships) do
+        if ship_unit and ship_unit.guid then
+            if M.assign_ship_to_mission(side, ship_unit, strike_mission, group_name) then
+                ok_count = ok_count + 1
+                print('Strike package naval asset: ' .. tostring(ship_unit.name) .. ' → ' .. strike_mission ..
+                    ' (group ' .. tostring(group_name) .. ')')
+                M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
+                M.add_strike_ship_weapon_policy_event(ship_unit)
+            else
+                fail_count = fail_count + 1
+                print('ERROR: strike package naval assign failed: ' .. tostring(ship_unit.name))
+            end
+        end
+    end
+    if ok_count > 0 then
+        M.set_naval_strike_schedule(side, strike_mission, sched.tlam_launch, sched.tot)
+        if sched.tlam_launch then
+            print('OK: ' .. strike_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
+                ' TOT=' .. tostring(sched.tot) .. ' (' .. ok_count .. ' CSG hull(s))')
+        else
+            print('OK: ' .. strike_mission .. ' TOT=' .. tostring(sched.tot) ..
+                ' (' .. ok_count .. ' CSG hull(s))')
+        end
+    end
+    M._restore_air_after_naval_schedule_mutation()
+    for _, ship_unit in ipairs(strike_ships) do
+        if ship_unit and ship_unit.guid then
+            M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
+        end
+    end
+    print('OK: unified strike package — ' .. ok_count .. ' naval asset(s), ' .. fail_count .. ' failed on ' .. strike_mission)
+    return ok_count > 0 and fail_count == 0
+end
+
+-- Single CG/hull wrapper — prefer setup_csg_strike_on_air_strike for full CSG TLAM salvo.
+function M.setup_csg_tlam_on_air_strike(ship_unit, group_name)
+    if not ship_unit or not ship_unit.guid then
+        return false
+    end
+    return M.setup_csg_strike_on_air_strike(group_name, { ship_unit })
+end
+
+-- CG solo (ungrouped) on package mission — legacy; prefer setup_csg_tlam_on_air_strike when CG is in CSG.
+function M.setup_tlam_on_air_strike(ship_unit)
+    if not ship_unit or not ship_unit.guid then
+        return false
+    end
+    local side = M.state.strike_side or 'United States'
+    local strike_mission = M.state.STRIKE_AIR_MISSION
+    if not strike_mission then
+        print('ERROR: setup_tlam_on_air_strike — STRIKE_AIR_MISSION not configured')
+        return false
+    end
+    local sched = M.strike_schedule_datetimes()
+    if M._unit_is_in_surface_group(ship_unit) then
+        M.ungroup_unit(ship_unit, side)
+    end
+    local ok = M._assign_solo_tlam_shooter(side, ship_unit, strike_mission)
+    if ok then
+        print('TLAM shooter assigned: ' .. tostring(ship_unit.name) .. ' → ' .. strike_mission ..
+            ' (unified strike package — TOT in ME)')
+        M.set_naval_strike_schedule(side, strike_mission, sched.tlam_launch, sched.tot)
+        if sched.tlam_launch then
+            print('OK: ' .. strike_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
+                ' TOT=' .. tostring(sched.tot))
+        else
+            print('OK: ' .. strike_mission .. ' TOT=' .. tostring(sched.tot))
+        end
+    else
+        print('ERROR: TLAM shooter assign failed: ' .. tostring(ship_unit.name))
+    end
+    M.configure_tlam_shooter_weapon_policy(ship_unit)
+    M.verify_tlam_mission_has_shooter(ship_unit)
+    M._restore_air_after_naval_schedule_mutation()
+    M.configure_tlam_shooter_weapon_policy(ship_unit)
+    M.add_tlam_shooter_weapon_policy_event(ship_unit)
+    return ok
+end
+
+-- CG 52 solo op aparte TLAM Strike (legacy — ME TOT vaak leeg; prefer setup_tlam_on_air_strike).
 function M.setup_solo_tlam_shooter(ship_unit)
     if not ship_unit or not ship_unit.guid then
         return false
@@ -863,14 +1497,20 @@ function M.setup_solo_tlam_shooter(ship_unit)
     if ok then
         print('TLAM shooter assigned: ' .. tostring(ship_unit.name) .. ' (solo — not in CSG group)')
         M.set_naval_strike_schedule(side, naval_mission, sched.tlam_launch, sched.tot)
-        print('OK: ' .. naval_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
-            ' TOT=' .. tostring(sched.tot))
+        if sched.tlam_launch then
+            print('OK: ' .. naval_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
+                ' TOT=' .. tostring(sched.tot))
+        else
+            print('OK: ' .. naval_mission .. ' TOT=' .. tostring(sched.tot) ..
+                ' (CMO auto-launch from range)')
+        end
     else
         print('ERROR: TLAM shooter assign failed: ' .. tostring(ship_unit.name))
     end
-    M.configure_tlam_shooter_weapon_policy(ship_unit)
+    M.configure_strike_ship_weapon_policy(ship_unit)
     M.verify_solo_tlam_shooter(ship_unit)
     M.verify_tlam_mission_has_shooter(ship_unit)
+    M.add_strike_ship_weapon_policy_event(ship_unit)
     return ok
 end
 
@@ -1012,7 +1652,9 @@ end
 
 function M.finalize_strike_air_after_flight_plan()
     local air_mission = M.state.STRIKE_AIR_MISSION
-    local m = ScenEdit_GetMission(M.state.strike_side, air_mission)
+    local side = M.state.strike_side
+    local sched = M.strike_schedule_datetimes()
+    local m = ScenEdit_GetMission(side, air_mission)
     if m and m.updateWPtimes then
         local ok_wp, err_wp = pcall(function()
             m:updateWPtimes()
@@ -1021,12 +1663,18 @@ function M.finalize_strike_air_after_flight_plan()
             print('WARNING: updateWPtimes failed: ' .. tostring(err_wp))
         end
     end
-    -- CreateMissionFlightPlan may drop assignments; restore all spawned aircraft (never SetMission on air strike here).
+    -- CreateMissionFlightPlan may drop assignments; restore all spawned aircraft (never SetMission on strike package here).
     local ok, fail = M.refresh_spawned_air_assignments(nil)
     if fail > 0 then
         ok, fail = M.refresh_spawned_air_assignments(nil)
     end
     print('Air assign after flight plan: ' .. ok .. ' OK, ' .. fail .. ' failed')
+    -- Reassert TOT via wrapper only (SetMission on strike package after assign clears ORBAT).
+    M.set_strike_tot_schedule(side, air_mission, sched.tot, {
+        skip_flight_plan = true,
+        wrapper_only = true,
+        verify = true,
+    })
     return ok, fail
 end
 
@@ -1100,6 +1748,133 @@ function M.run_strike_assign_restore(mission_filter)
         print('Strike assign restore inline: ' .. ok .. ' OK, ' .. fail .. ' failed')
     end
     return ok, fail
+end
+
+-- Re-apply patrol/strike mission schedule at Play (carrier air ops can clear ME schedule).
+function M.add_mission_schedule_restore_event(opts)
+    opts = opts or {}
+    local side = opts.side or M.state.strike_side or 'United States'
+    local missions = opts.missions
+    if not missions or #missions == 0 then
+        return false
+    end
+    local start_date = opts.start_date or M.state.strike_package_date
+    local schedule_mode = opts.schedule_mode or 'takeoff'
+    local takeoff_hms = opts.takeoff_hms
+    local station_hms = opts.station_hms or takeoff_hms
+    if schedule_mode == 'on_station' then
+        if not station_hms then
+            return false
+        end
+    elseif not takeoff_hms then
+        return false
+    end
+    local takeoff_dt = takeoff_hms and M.mission_schedule_datetime(start_date, takeoff_hms) or nil
+    local station_dt = station_hms and M.mission_schedule_datetime(start_date, station_hms) or nil
+    local flight_size = opts.flight_size or 2
+    local min_req = opts.min_aircraft_req or 2
+    local restore_times = opts.restore_times or { '00:00:05' }
+    local base_event = opts.event_name or 'Mission schedule restore'
+    local trigger_hms = (schedule_mode == 'on_station') and station_hms or takeoff_hms
+
+    local lines = {}
+    for _, mission_name in ipairs(missions) do
+        if schedule_mode == 'on_station' and station_hms and station_dt then
+            table.insert(lines, string.format(
+                "ScenEdit_CreateMissionFlightPlan('%s', '%s', {DATEONTARGET='%s', TIMEONTARGET='%s'})",
+                side:gsub("'", "\\'"),
+                mission_name:gsub("'", "\\'"),
+                start_date:gsub("'", "\\'"),
+                station_hms
+            ))
+            table.insert(lines, string.format(
+                "ScenEdit_SetMission('%s', '%s', {TimeOnTargetStation='%s', UseFlightSize=true, FlightSize=%d, MinAircraftReq=%d, OnDeactivateUassign=false, isactive=true})",
+                side:gsub("'", "\\'"),
+                mission_name:gsub("'", "\\'"),
+                station_dt:gsub("'", "\\'"),
+                flight_size,
+                min_req
+            ))
+        else
+            table.insert(lines, string.format(
+                "ScenEdit_SetMission('%s', '%s', {starttime='%s', TakeOffTime='%s', UseFlightSize=true, FlightSize=%d, MinAircraftReq=%d, OnDeactivateUassign=false, isactive=true})",
+                side:gsub("'", "\\'"),
+                mission_name:gsub("'", "\\'"),
+                takeoff_dt,
+                takeoff_dt,
+                flight_size,
+                min_req
+            ))
+        end
+    end
+    table.insert(lines, "print('OK: Mission schedule restore — " .. #missions .. " mission(s)')")
+    local base_script = table.concat(lines, '\r\n')
+    local full_script = base_script
+    if opts.extra_script and opts.extra_script ~= '' then
+        full_script = base_script .. '\r\n' .. opts.extra_script
+    end
+
+    for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
+        local label = base_event .. suffix
+        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    end
+    for i = 1, #restore_times do
+        local label = base_event .. ' (time ' .. i .. ')'
+        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    end
+
+    local function register_event(event_label, trigger_name, trigger_def, event_script)
+        local action_name = event_label .. ' action'
+        ScenEdit_SetTrigger(trigger_def)
+        ScenEdit_SetAction({
+            mode = 'add',
+            type = 'LuaScript',
+            name = action_name,
+            ScriptText = event_script or base_script,
+        })
+        ScenEdit_SetEvent(event_label, {
+            mode = 'add',
+            Description = event_label,
+            IsActive = true,
+            IsRepeatable = false,
+            IsShown = true,
+        })
+        ScenEdit_SetEventTrigger(event_label, { mode = 'add', name = trigger_name })
+        ScenEdit_SetEventAction(event_label, { mode = 'add', name = action_name })
+    end
+
+    register_event(base_event .. ' (load)', base_event .. ' load trigger', {
+        mode = 'add',
+        type = 'ScenLoaded',
+        name = base_event .. ' load trigger',
+    }, base_script)
+
+    local time_labels = {}
+    for i, hhmmss in ipairs(restore_times) do
+        local dt = M.mission_schedule_datetime(start_date, hhmmss)
+        local event_label = base_event .. ' (time ' .. i .. ')'
+        local event_script = base_script
+        if opts.extra_script and opts.extra_script ~= '' and hhmmss == trigger_hms then
+            event_script = full_script
+        end
+        register_event(event_label, event_label .. ' trigger', {
+            mode = 'add',
+            type = 'Time',
+            name = event_label .. ' trigger',
+            Time = dt,
+        }, event_script)
+        table.insert(time_labels, dt)
+    end
+
+    local mode_label = (schedule_mode == 'on_station') and 'on-station' or 'takeoff'
+    print('OK: Mission schedule restore "' .. base_event .. '" (' .. mode_label .. ') — ScenLoaded + ' ..
+        #restore_times .. ' Time trigger(s)' ..
+        (#time_labels > 0 and (' | times=' .. table.concat(time_labels, ', ')) or ''))
+    return true
 end
 
 function M.add_strike_assign_restore_event(opts)

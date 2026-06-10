@@ -340,6 +340,8 @@ local m = ScenEdit_GetMission('United States', 'My Strike')
 if m then m:updateWPtimes() end
 ```
 
+**Verify after assign:** re-fetch with [`ScenEdit_GetMission`](https://commandlua.github.io/assets/Function_ScenEdit_GetMission.html) and compare [Mission wrapper](https://commandlua.github.io/assets/Wrappers.html#wrapper_Mission) fields `TimeOnTargetStation` (TOT / on-station), `starttime`, `TakeOffTime`. Bootstrap: `cmo.verify_mission_schedule(side, mission, { tot_hms = '06:30:00', launch_dt = '2026.06.01 05:45:00' })` — **aborts scenario init** on mismatch (`error()`).
+
 ---
 
 ### ScenEdit_DeleteMission()

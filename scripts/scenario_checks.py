@@ -99,7 +99,10 @@ def _validate_csg_formation(content, air_carrier_vars):
     csg_group = _parse_csg_group_constant(content)
     group_map = _parse_unit_group_assignments(content)
     scenario_body = content.split("-- [preflight: scenario_bootstrap.lua]")[0]
+    grouped_tlam = bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
     detached_tlam = bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
+    if grouped_tlam:
+        detached_tlam = False
     has_form_helper = bool(
         re.search(r"function\s+(?:M\.)?form_csg_group\s*\(", content, re.IGNORECASE)
         or re.search(r"form_csg_group\s*=\s*cmo\.form_csg_group", content, re.IGNORECASE)
@@ -158,13 +161,18 @@ def _validate_csg_formation(content, air_carrier_vars):
             suffix = (
                 " (CVN+DDGs; CG detached TLAM shooter)."
                 if detached_tlam
-                else "."
+                else (
+                    " (full CSG on strike)."
+                    if re.search(r"setup_csg_strike_on_air_strike\s*\(", content, re.IGNORECASE)
+                    else " (CSG hull on strike)."
+                ) if grouped_tlam else "."
             )
             ok.append(
                 f"OK: CSG formation — {len(placed_group_members)} ship(s) in group '{csg_group}'" + suffix
             )
         cg_in_group_tlam_fix = bool(
-            re.search(
+            grouped_tlam
+            or re.search(
                 rf"form_csg_group\s*\([\s\S]{{0,800}}?{_ASSIGN_TLAM_SHOOTER_CALL}",
                 content,
                 re.IGNORECASE,
@@ -210,11 +218,15 @@ def _validate_csg_formation(content, air_carrier_vars):
         re.search(r"function\s+(?:M\.)?assign_ship_to_mission\s*\(", content, re.IGNORECASE)
         and re.search(r"assign_tlam_shooter\s*\(", content, re.IGNORECASE)
     )
-    has_apply_naval = bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE)) or bool(
-        re.search(
-            rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
-            scenario_body,
-            re.IGNORECASE,
+    has_apply_naval = (
+        bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
+        or bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
+        or bool(
+            re.search(
+                rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
+                scenario_body,
+                re.IGNORECASE,
+            )
         )
     )
     station_assigned = has_assign_call and "nimitz" in placed_csg
@@ -260,10 +272,15 @@ def _validate_csg_formation(content, air_carrier_vars):
                 f"with patrol '{_CSG_PATROL_MISSION.title()}'."
             )
         elif re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, content, re.IGNORECASE):
-            warnings.append(
-                "CSG formation: no surface patrol on CVN lead (CSG Station Keeping omitted) — "
-                "formation via group only; CG on separate TLAM strike."
-            )
+            if grouped_tlam:
+                ok.append(
+                    "OK: CSG formation — group-only (no CSG Station Keeping); CG on strike in formation."
+                )
+            else:
+                warnings.append(
+                    "CSG formation: no surface patrol on CVN lead (CSG Station Keeping omitted) — "
+                    "formation via group only; CG on separate TLAM strike."
+                )
 
     if _CSG_STRIKE_SHIP_VAR in placed_csg:
         striker_missions = patrol_assigns.get(_CSG_STRIKE_SHIP_VAR, [])
@@ -286,34 +303,58 @@ def _validate_csg_formation(content, air_carrier_vars):
                 "OK: CSG formation — CG on timed TLAM strike; CVN/DDGs follow group lead patrol."
             )
         elif striker_on_tlam and not detached_tlam and not station_assigned:
+            strike_label = (
+                "Caribbean Thunder Strike in formation"
+                if grouped_tlam
+                else "timed TLAM strike"
+            )
             ok.append(
-                "OK: CSG formation — CG on Caribbean TLAM Salvo; CVN has no surface patrol (group-only formation)."
+                f"OK: CSG formation — CG on {strike_label}; CVN has no surface patrol (group-only formation)."
             )
         elif not striker_on_tlam and not detached_tlam and station_assigned:
             warnings.append(
                 f"CSG formation: CG '{_CSG_STRIKE_SHIP_VAR}' has no Caribbean TLAM Salvo via assign_csg_group_missions."
             )
-        if has_tlam_ship_helper and group_map.get(_CSG_STRIKE_SHIP_VAR) == csg_group and not has_apply_naval:
+        if (
+            has_tlam_ship_helper
+            and group_map.get(_CSG_STRIKE_SHIP_VAR) == csg_group
+            and not has_apply_naval
+            and not grouped_tlam
+        ):
             errors.append(
-                "CSG TLAM: use apply_naval_strike_flight_plan(cg, nil) — grouped CG breaks TLAM schedule in ME."
+                "CSG TLAM: use setup_csg_tlam_on_air_strike(cg, CSG_GROUP) — grouped CG needs in-group strike assign."
             )
+        elif grouped_tlam:
+            if re.search(r"setup_csg_strike_on_air_strike\s*\(", scenario_body, re.IGNORECASE):
+                ok.append(
+                    "OK: CSG TLAM — unified strike package (setup_csg_strike_on_air_strike)."
+                )
+            else:
+                ok.append(
+                    "OK: CSG TLAM — naval strike asset on unified package (setup_csg_tlam_on_air_strike)."
+                )
         elif has_apply_naval and detached_tlam:
-            ok.append(
-                "OK: CSG TLAM — solo CG shooter (setup_solo_tlam_shooter / detached from CSG group)."
-            )
+            if re.search(r"setup_tlam_on_air_strike\s*\(", scenario_body, re.IGNORECASE):
+                ok.append(
+                    "OK: CSG TLAM — CG on unified strike package (setup_tlam_on_air_strike; shared TOT in ME)."
+                )
+            else:
+                ok.append(
+                    "OK: CSG TLAM — solo CG shooter (setup_solo_tlam_shooter / detached from CSG group)."
+                )
         elif has_apply_naval and not detached_tlam:
             ok.append(
                 "OK: CSG TLAM — apply_naval_strike_flight_plan (legacy grouped path — prefer setup_solo_tlam_shooter)."
             )
 
-    if csg_group and re.search(
-        rf"form_csg_group\s*\([^)]*{_CSG_STRIKE_SHIP_VAR}",
-        scenario_body,
-        re.IGNORECASE,
+    if (
+        csg_group
+        and re.search(rf"form_csg_group\s*\([^)]*{_CSG_STRIKE_SHIP_VAR}", scenario_body, re.IGNORECASE)
+        and not grouped_tlam
     ):
         warnings.append(
-            f"CSG TLAM: '{_CSG_STRIKE_SHIP_VAR}' in form_csg_group — grouped CG often clears launch/TOT in ME; "
-            "use setup_solo_tlam_shooter(cg) with CG outside the group (see cuba_pressure_2026.lua)."
+            f"CSG TLAM: '{_CSG_STRIKE_SHIP_VAR}' in form_csg_group without setup_csg_tlam_on_air_strike — "
+            "use setup_csg_tlam_on_air_strike(cg, CSG_GROUP) after air flight plan."
         )
     group_patrol = bool(
         re.search(
@@ -361,7 +402,8 @@ def _validate_tlam_schedule_workflow(content):
         return errors, warnings, ok
 
     apply_fn = re.search(
-        r"function\s+M\.(?:apply_naval_strike_flight_plan|setup_solo_tlam_shooter)\s*\([\s\S]*?^end",
+        r"function\s+M\.(?:apply_naval_strike_flight_plan|setup_solo_tlam_shooter|"
+        r"setup_csg_strike_on_air_strike|setup_csg_tlam_on_air_strike)\s*\([\s\S]*?^end",
         content,
         re.IGNORECASE | re.MULTILINE,
     )
@@ -384,10 +426,14 @@ def _validate_tlam_schedule_workflow(content):
             rf"finalize_csg_tlam\s*\(\s*\w+\s*,\s*{_CSG_STRIKE_SHIP_VAR}",
             content,
             re.IGNORECASE,
-        ) and not re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE):
+        ) and not re.search(
+            rf"(?:{_DETACHED_TLAM_CALL}|{_GROUPED_CSG_TLAM_CALL})",
+            scenario_body,
+            re.IGNORECASE,
+        ):
             warnings.append(
-                "TLAM schedule: add finalize_csg_tlam, finalize_detached_tlam_shooter, or setup_solo_tlam_shooter after "
-                "apply_naval_strike_flight_plan."
+                "TLAM schedule: add setup_csg_tlam_on_air_strike, finalize_detached_tlam_shooter, or "
+                "setup_solo_tlam_shooter after apply_naval_strike_flight_plan."
             )
         elif re.search(
             rf"finalize_csg_tlam\s*\(\s*\w+\s*,\s*{_CSG_STRIKE_SHIP_VAR}",
@@ -395,24 +441,29 @@ def _validate_tlam_schedule_workflow(content):
             re.IGNORECASE,
         ):
             ok.append("OK: TLAM schedule — finalize_csg_tlam at init end.")
+        elif re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE):
+            ok.append("OK: TLAM schedule — naval assets unified on strike package at init end.")
         elif re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE):
             ok.append("OK: TLAM schedule — solo/detached TLAM setup at init end.")
         elif "restore_tlam_shooter_and_schedule" in body or "finalize_csg_tlam" in content:
             ok.append("OK: TLAM schedule — finalize_csg_tlam inline restore at init end.")
 
     if re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, scenario_body, re.IGNORECASE):
-        has_apply_naval = bool(
-            re.search(
-                rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
-                scenario_body,
-                re.IGNORECASE,
+        has_apply_naval = (
+            bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
+            or bool(
+                re.search(
+                    rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
+                    scenario_body,
+                    re.IGNORECASE,
+                )
             )
-            or re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE)
+            or bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
         )
         if not has_apply_naval:
             errors.append(
-                "TLAM schedule: use setup_solo_tlam_shooter(cg), apply_naval_strike_flight_plan(cg, nil), "
-                "or finalize_detached_tlam_shooter — not inline SetMission alone."
+                "TLAM schedule: use setup_csg_tlam_on_air_strike(cg, CSG_GROUP), setup_solo_tlam_shooter(cg), "
+                "apply_naval_strike_flight_plan(cg, nil), or finalize_detached_tlam_shooter — not inline SetMission alone."
             )
         apply_pos = -1
         air_fp_pos = -1
@@ -454,115 +505,178 @@ def _validate_tlam_schedule_workflow(content):
     return errors, warnings, ok
 
 def _validate_tlam_shooter_weapon_policy(content):
-    """TLAM shooter: main gun never on land; surface gun self-defence only; no active hunting."""
+    """Strike ships: main gun never on land; surface gun self-defence only; no opportunistic hunting."""
     errors = []
     warnings = []
     ok = []
 
-    has_naval = bool(
+    has_strike_ships = bool(
         re.search(
-            r"@naval_package|TLAM_STRIKE_MISSION|setup_solo_tlam_shooter",
+            r"@naval_package|TLAM_STRIKE_MISSION|setup_solo_tlam_shooter|setup_csg_strike_on_air_strike|"
+            r"setup_csg_tlam_on_air_strike|setup_tlam_on_air_strike|assign_ship_to_mission",
             content,
             re.IGNORECASE,
         )
     )
-    if not has_naval:
+    if not has_strike_ships:
         return errors, warnings, ok
 
     if not re.search(r"M\.LAND_STRIKE_WRA_TARGET_TYPES\s*=", content):
-        errors.append("TLAM shooter guns: bootstrap missing M.LAND_STRIKE_WRA_TARGET_TYPES.")
+        errors.append("Strike ship guns: bootstrap missing M.LAND_STRIKE_WRA_TARGET_TYPES.")
     if not re.search(r"M\.SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES\s*=", content):
         errors.append(
-            "TLAM shooter guns: bootstrap missing M.SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES."
+            "Strike ship guns: bootstrap missing M.SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES."
         )
     if not re.search(
         r"M\.WRA_GUN_SURFACE_SELF_DEFENSE\s*=\s*\{\s*'inherit'\s*,\s*'inherit'\s*,\s*'none'\s*,\s*'max'\s*\}",
         content,
     ):
         errors.append(
-            "TLAM shooter guns: M.WRA_GUN_SURFACE_SELF_DEFENSE must be "
+            "Strike ship guns: M.WRA_GUN_SURFACE_SELF_DEFENSE must be "
             "{ 'inherit', 'inherit', 'none', 'max' } (no offensive surface fire; self-defence allowed)."
         )
     else:
         ok.append(
-            "OK: TLAM shooter guns — surface WRA firing=none, self-defence=max."
+            "OK: Strike ship guns — surface WRA firing=none, self-defence=max."
         )
     if not re.search(
         r"M\.WRA_GUN_LAND_BLOCK\s*=\s*\{\s*'none'\s*,\s*'none'\s*,\s*'none'\s*,\s*'none'\s*\}",
         content,
     ):
         errors.append(
-            "TLAM shooter guns: M.WRA_GUN_LAND_BLOCK must block all land gun WRA entries."
+            "Strike ship guns: M.WRA_GUN_LAND_BLOCK must block all land gun WRA entries."
         )
     else:
-        ok.append("OK: TLAM shooter guns — land gun WRA fully blocked.")
+        ok.append("OK: Strike ship guns — land gun WRA fully blocked.")
 
     policy_body = None
     policy_match = re.search(
-        r"function\s+M\.configure_tlam_shooter_weapon_policy\s*\([\s\S]*?^end",
+        r"function\s+M\.configure_strike_ship_weapon_policy\s*\([\s\S]*?^end",
         content,
         re.IGNORECASE | re.MULTILINE,
     )
     if not policy_match:
         errors.append(
-            "TLAM shooter guns: configure_tlam_shooter_weapon_policy() missing from bootstrap."
+            "Strike ship guns: configure_strike_ship_weapon_policy() missing from bootstrap."
         )
     else:
         policy_body = policy_match.group(0)
         if not re.search(r"weapon_control_status_surface\s*=\s*0", policy_body):
             errors.append(
-                "TLAM shooter guns: unit doctrine must set weapon_control_status_surface=0 "
+                "Strike ship guns: unit doctrine must set weapon_control_status_surface=0 "
                 "(HOLD — no active surface hunting)."
             )
         else:
             ok.append(
-                "OK: TLAM shooter guns — unit WCS surface HOLD (self-defence only)."
+                "OK: Strike ship guns — unit WCS surface HOLD (self-defence only)."
             )
         if not re.search(r"engage_opportunity_targets\s*=\s*false", policy_body):
             errors.append(
-                "TLAM shooter guns: engage_opportunity_targets=false required (no opportunistic hunting)."
+                "Strike ship guns: engage_opportunity_targets=false required (no opportunistic hunting)."
             )
         else:
-            ok.append("OK: TLAM shooter guns — engage_opportunity_targets=false.")
-        if not re.search(r"_apply_tlam_shooter_gun_wra", policy_body):
+            ok.append("OK: Strike ship guns — engage_opportunity_targets=false.")
+        if not re.search(
+            r"weapon_state_planned\s*=\s*'ShotgunBVR'", policy_body, re.IGNORECASE
+        ):
             errors.append(
-                "TLAM shooter guns: configure_tlam_shooter_weapon_policy must call _apply_tlam_shooter_gun_wra()."
+                "Strike ship guns: unit doctrine must set weapon_state_planned='ShotgunBVR' "
+                "(no gun fallback when missiles spent on Strike missions)."
+            )
+        else:
+            ok.append(
+                "OK: Strike ship guns — unit ShotgunBVR (standoff only; blocks gun fallback)."
+            )
+        if not re.search(r"_apply_strike_ship_gun_wra", policy_body):
+            errors.append(
+                "Strike ship guns: configure_strike_ship_weapon_policy must call _apply_strike_ship_gun_wra()."
             )
 
     apply_match = re.search(
-        r"function\s+M\._apply_tlam_shooter_gun_wra\s*\([\s\S]*?^end",
+        r"function\s+M\._apply_strike_ship_gun_wra\s*\([\s\S]*?^end",
         content,
         re.IGNORECASE | re.MULTILINE,
     )
     if not apply_match:
-        errors.append("TLAM shooter guns: _apply_tlam_shooter_gun_wra() missing from bootstrap.")
+        errors.append("Strike ship guns: _apply_strike_ship_gun_wra() missing from bootstrap.")
     else:
         apply_body = apply_match.group(0)
         if "WRA_GUN_SURFACE_SELF_DEFENSE" not in apply_body:
             errors.append(
-                "TLAM shooter guns: _apply_tlam_shooter_gun_wra must apply WRA_GUN_SURFACE_SELF_DEFENSE."
+                "Strike ship guns: _apply_strike_ship_gun_wra must apply WRA_GUN_SURFACE_SELF_DEFENSE."
             )
         if "WRA_GUN_LAND_BLOCK" not in apply_body:
             errors.append(
-                "TLAM shooter guns: _apply_tlam_shooter_gun_wra must apply WRA_GUN_LAND_BLOCK."
+                "Strike ship guns: _apply_strike_ship_gun_wra must apply WRA_GUN_LAND_BLOCK."
             )
         if "SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES" not in apply_body:
             errors.append(
-                "TLAM shooter guns: _apply_tlam_shooter_gun_wra must iterate SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES."
+                "Strike ship guns: _apply_strike_ship_gun_wra must iterate SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES."
             )
 
-    solo_match = re.search(
-        r"function\s+M\.setup_solo_tlam_shooter\s*\([\s\S]*?^end",
+    assign_match = re.search(
+        r"function\s+M\.assign_ship_to_mission\s*\([\s\S]*?^end",
         content,
         re.IGNORECASE | re.MULTILINE,
     )
-    if solo_match:
-        if "configure_tlam_shooter_weapon_policy" not in solo_match.group(0):
+    if assign_match:
+        body = assign_match.group(0)
+        if "configure_strike_ship_weapon_policy" not in body:
             errors.append(
-                "TLAM shooter guns: setup_solo_tlam_shooter must call configure_tlam_shooter_weapon_policy()."
+                "Strike ship guns: assign_ship_to_mission must apply configure_strike_ship_weapon_policy "
+                "on successful Strike mission assign."
+            )
+        elif "_is_strike_ship_mission" not in body:
+            warnings.append(
+                "Strike ship guns: assign_ship_to_mission should gate policy via _is_strike_ship_mission()."
             )
         else:
-            ok.append("OK: TLAM shooter guns — setup_solo_tlam_shooter applies weapon policy.")
+            ok.append(
+                "OK: Strike ship guns — assign_ship_to_mission auto-applies policy on Strike missions."
+            )
+    for fn_name, label in (
+        ("setup_csg_strike_on_air_strike", "setup_csg_strike_on_air_strike"),
+        ("setup_csg_tlam_on_air_strike", "setup_csg_tlam_on_air_strike"),
+        ("setup_tlam_on_air_strike", "setup_tlam_on_air_strike"),
+        ("setup_solo_tlam_shooter", "setup_solo_tlam_shooter"),
+    ):
+        fn_match = re.search(
+            rf"function\s+M\.{fn_name}\s*\([\s\S]*?^end",
+            content,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if fn_match:
+            body = fn_match.group(0)
+            has_policy = bool(
+                re.search(
+                    r"configure_strike_ship_weapon_policy|configure_tlam_shooter_weapon_policy",
+                    body,
+                )
+            )
+            has_delegate = fn_name == "setup_csg_tlam_on_air_strike" and (
+                "setup_csg_strike_on_air_strike" in body
+            )
+            has_events = bool(
+                re.search(
+                    r"add_strike_ship_weapon_policy_event|add_tlam_shooter_weapon_policy_event",
+                    body,
+                )
+            )
+            if not has_policy and not has_delegate:
+                errors.append(
+                    f"Strike ship guns: {fn_name} must call configure_strike_ship_weapon_policy()."
+                )
+            elif not has_events and not (
+                fn_name == "setup_csg_tlam_on_air_strike" and has_delegate
+            ):
+                warnings.append(
+                    f"Strike ship guns: {fn_name} should register "
+                    "add_strike_ship_weapon_policy_event for Play-time WRA refresh."
+                )
+            else:
+                ok.append(
+                    f"OK: Strike ship guns — {label} applies policy + Play refresh."
+                )
 
     mission_match = re.search(
         r"function\s+M\.configure_naval_strike_doctrine\s*\([\s\S]*?^end",
@@ -577,15 +691,15 @@ def _validate_tlam_shooter_weapon_policy(content):
             re.IGNORECASE,
         ):
             errors.append(
-                "TLAM shooter guns: naval strike mission weapon_state must not use ToO/guns modes."
+                "Strike ship guns: naval strike mission weapon_state must not use ToO/guns modes."
             )
         elif not re.search(r"weapon_state_planned\s*=\s*'ShotgunBVR'", mission_body):
             warnings.append(
-                "TLAM shooter guns: naval strike mission should use weapon_state_planned='ShotgunBVR'."
+                "Strike ship guns: naval strike mission should use weapon_state_planned='ShotgunBVR'."
             )
         else:
             ok.append(
-                "OK: TLAM shooter guns — naval strike mission ShotgunBVR (standoff; no gun fallback)."
+                "OK: Strike ship guns — naval strike mission ShotgunBVR (standoff; no gun fallback)."
             )
 
     return errors, warnings, ok
@@ -789,10 +903,16 @@ def _validate_strike_tot_synchronization(content, mission_map):
         ok.append(f"OK: Strike timing — air flight plan uses strike_package_tot {canonical_tot}.")
 
     if re.search(_SOLO_TLAM_CALL, scenario_body, re.IGNORECASE):
-        ok.append(
-            f"OK: Strike timing — solo TLAM via setup_solo_tlam_shooter (hardcoded "
-            f"tlam_launch_time + strike_package_tot)."
-        )
+        if re.search(r"local\s+tlam_launch_time\s*=", scenario_body, re.IGNORECASE):
+            ok.append(
+                f"OK: Strike timing — solo TLAM via setup_solo_tlam_shooter (hardcoded "
+                f"tlam_launch_time + strike_package_tot)."
+            )
+        else:
+            ok.append(
+                f"OK: Strike timing — solo TLAM TOT sync via setup_solo_tlam_shooter "
+                f"(TimeOnTargetStation = strike_package_tot {canonical_tot}; CMO auto-launch)."
+            )
 
     order_errors, order_warnings, order_ok = _validate_strike_schedule_order(scenario_body)
     errors.extend(order_errors)
@@ -893,7 +1013,7 @@ def _validate_cvn_strike_air_schedule(content, scenario_body):
 
     timing = _parse_lua_timing_vars(content)
     cap_t = timing.get("cap_launch_time")
-    sead_t = timing.get("sead_package_takeoff")
+    sead_t = timing.get("sead_on_station_time") or timing.get("sead_package_takeoff")
     cap_min = _time_to_minutes(cap_t) if cap_t else None
     sead_min = _time_to_minutes(sead_t) if sead_t else None
     if cap_min is not None and sead_min is not None and cap_min <= sead_min:
@@ -1005,6 +1125,12 @@ def _validate_strike_tot_reachability(
             bomber_staging_refs.add(host_ref)
 
     geo = _parse_geo_unit_positions(content)
+
+    if csg_anchor and tlam_lead is None and not tlam_launch:
+        ok.append(
+            "OK: Strike TOT reachability — TLAM TOT-only sync (no tlam_launch_time); "
+            "CMO schedules Tomahawk launch from range to TimeOnTargetStation."
+        )
 
     if csg_anchor and tlam_lead is not None:
         tlam_origin = csg_anchor[:2]
@@ -2234,7 +2360,7 @@ def _validate_air_assign_after_mission_mutations(content):
             )
 
     if re.search(
-        r"setup_solo_tlam_shooter|ensure_naval_strike_me_schedule|apply_naval_strike_flight_plan",
+        r"setup_solo_tlam_shooter|setup_csg_tlam_on_air_strike|setup_tlam_on_air_strike|ensure_naval_strike_me_schedule|apply_naval_strike_flight_plan",
         scenario_body,
         re.IGNORECASE,
     ):
@@ -2638,6 +2764,153 @@ def _validate_strike_flight_package_grouping(content, mission_map):
 
     return errors, warnings, ok
 
+def _validate_strike_escort_coverage(content, mission_map):
+    """
+    CMO drops strikers when escort count cannot cover each strike flight.
+    Required escorts ≈ ceil(strikers / strike_flight_size) * escort_min_shooter.
+    """
+    errors = []
+    warnings = []
+    ok = []
+    strike_missions = {name for name, role in mission_map.items() if role == "strike"}
+    set_mission = _parse_set_mission_strike_flight_settings(content)
+    packages, _waves = _parse_strike_package_annotations(content)
+    merged_pkg = _merge_strike_package_annotations(packages)
+    air_counts = _strike_air_counts_by_mission(content, mission_map)
+    for mission_name in air_counts:
+        if _infer_mission_role(mission_name, mission_map) == "strike":
+            strike_missions.add(mission_name)
+    if not strike_missions:
+        return errors, warnings, ok
+
+    for mission_name in strike_missions:
+        counts = air_counts.get(mission_name, {"strikers": 0, "escorts": 0})
+        strikers = counts["strikers"]
+        escorts = counts["escorts"]
+        if strikers < 2:
+            continue
+
+        pkg = merged_pkg
+        sm = set_mission.get(mission_name) or {}
+
+        strike_use = sm.get("strike_use_flight_size")
+        ann_use = pkg.get("use_flight_size", "").lower()
+        if strike_use is None and ann_use in ("true", "yes", "1"):
+            strike_use = True
+        elif strike_use is None and ann_use in ("false", "no", "0"):
+            strike_use = False
+
+        strike_size = sm.get("strike_flight_size")
+        if strike_size is None and pkg.get("flight_size"):
+            strike_size = _parse_flight_size_value(pkg.get("flight_size"))
+        if strike_size is None or strike_size < 1:
+            strike_size = 4
+
+        escort_flight_size = sm.get("escort_flight_size")
+        if escort_flight_size is None and pkg.get("escort_flight_size"):
+            escort_flight_size = _parse_flight_size_value(pkg.get("escort_flight_size"))
+
+        escort_min = sm.get("escort_min_shooter")
+        if escort_min is None and pkg.get("min_ready_escort"):
+            try:
+                escort_min = int(pkg["min_ready_escort"])
+            except ValueError:
+                escort_min = None
+        if escort_flight_size is None or escort_flight_size < 1:
+            escort_flight_size = escort_min if escort_min and escort_min > 0 else 4
+        if escort_min is None or escort_min == 0:
+            escort_min = escort_flight_size if escort_flight_size and escort_flight_size > 0 else 2
+
+        min_strikers = sm.get("strike_min_aircraft")
+        if min_strikers is None and pkg.get("min_aircraft"):
+            try:
+                min_strikers = int(pkg["min_aircraft"])
+            except ValueError:
+                min_strikers = None
+
+        if strike_use is False:
+            continue
+
+        strike_flights = math.ceil(strikers / strike_size)
+        required_escorts = strike_flights * escort_min
+        oob_vs_mission_ok = True
+        total_on_mission = strikers + escorts
+
+        # CMO runtime: min to trigger ≈ StrikeMinAircraftReq × StrikeFlightSize (not raw MinReq).
+        cmo_trigger_min = None
+        if min_strikers is not None:
+            cmo_trigger_min = (
+                min_strikers * strike_size if strike_use else min_strikers
+            )
+            if total_on_mission < cmo_trigger_min:
+                oob_vs_mission_ok = False
+                errors.append(
+                    f"Strike OOB vs mission: '{mission_name}' has {total_on_mission} aircraft on "
+                    f"mission ({strikers} strikers + {escorts} escorts) but CMO trigger minimum "
+                    f"is {cmo_trigger_min} (StrikeMinAircraftReq={min_strikers} × "
+                    f"StrikeFlightSize={strike_size}) — mission will never take off and "
+                    "aircraft are removed. Lower MinAircraftReq or add aircraft."
+                )
+            elif strikers < cmo_trigger_min:
+                warnings.append(
+                    f"Strike OOB vs mission: '{mission_name}' has {strikers} strikers but CMO "
+                    f"trigger needs {cmo_trigger_min} total on mission — escorts may count toward "
+                    "the threshold at runtime."
+                )
+
+        cmo_escort_trigger_min = None
+        if escort_min is not None and escorts > 0:
+            escort_use = sm.get("escort_use_flight_size")
+            ann_escort_use = pkg.get("escort_use_flight_size", "").lower()
+            if escort_use is None and ann_escort_use in ("true", "yes", "1"):
+                escort_use = True
+            cmo_escort_trigger_min = (
+                escort_min * escort_flight_size if escort_use else escort_min
+            )
+            if escorts < cmo_escort_trigger_min:
+                oob_vs_mission_ok = False
+                errors.append(
+                    f"Strike OOB vs mission: '{mission_name}' has {escorts} escort(s) but CMO "
+                    f"escort trigger minimum is {cmo_escort_trigger_min} "
+                    f"(EscortMinShooter={escort_min} × EscortFlightSizeShooter="
+                    f"{escort_flight_size})."
+                )
+
+        if escorts < required_escorts:
+            oob_vs_mission_ok = False
+            errors.append(
+                f"Strike OOB vs mission: '{mission_name}' has {strikers} strikers "
+                f"(StrikeFlightSize={strike_size} → {strike_flights} strike flight(s)) but only "
+                f"{escorts} escort(s) with EscortMinShooter={escort_min} — need at least "
+                f"{required_escorts} escort aircraft or strikers deassign (e.g. distant base). "
+                f"Add escorts or set StrikeFlightSize={strikers} for a single wave."
+            )
+        elif (
+            escorts >= required_escorts
+            and escort_flight_size >= 2
+            and escorts % escort_flight_size != 0
+        ):
+            warnings.append(
+                f"Strike OOB vs mission: '{mission_name}' has {escorts} escort(s) — not a multiple "
+                f"of EscortFlightSizeShooter={escort_flight_size}; CMO may hold spare escorts on deck."
+            )
+
+        if oob_vs_mission_ok and escorts >= required_escorts:
+            trigger_part = ""
+            if cmo_trigger_min is not None:
+                trigger_part = (
+                    f", CMO trigger {cmo_trigger_min} "
+                    f"(MinReq {min_strikers} x flight {strike_size}) <= {total_on_mission} on mission"
+                )
+            ok.append(
+                f"OK: Strike OOB vs mission '{mission_name}' — OOB {strikers} strikers + "
+                f"{escorts} escorts matches mission (flight size {strike_size}, "
+                f"{strike_flights} strike flight(s), {required_escorts} escorts required"
+                f"{trigger_part})."
+            )
+
+    return errors, warnings, ok
+
 def _validate_sead_strike_launch_timing(content, mission_map):
     """
     Carrier SEAD should not launch at scenario start while strike package is still on deck.
@@ -2689,13 +2962,15 @@ def _validate_sead_strike_launch_timing(content, mission_map):
     if not delayed_names:
         return errors, warnings, ok
 
-    sead_takeoff = sead_pkg.get("takeoff")
+    sead_takeoff = sead_pkg.get("on_station") or sead_pkg.get("takeoff")
     if not sead_takeoff:
-        takeoff_var = re.search(
-            r"local\s+sead_package_takeoff\s*=\s*'([^']+)'", content, re.IGNORECASE
-        )
-        if takeoff_var:
-            sead_takeoff = takeoff_var.group(1)
+        for var_name in ("sead_on_station_time", "sead_package_takeoff"):
+            takeoff_var = re.search(
+                rf"local\s+{var_name}\s*=\s*'([^']+)'", content, re.IGNORECASE
+            )
+            if takeoff_var:
+                sead_takeoff = takeoff_var.group(1)
+                break
     tot_minutes = _time_to_minutes(strike_tot) if strike_tot else None
     takeoff_minutes = _time_to_minutes(sead_takeoff) if sead_takeoff else None
     lead_before_tot = (
@@ -2771,53 +3046,235 @@ def _validate_sead_strike_launch_timing(content, mission_map):
         and carrier_escorts_on_strike >= 4
         and flight_plans
     ):
-        if lead_before_tot > _STRIKE_ESCORT_TYPICAL_LAUNCH_MIN_BEFORE_TOT:
-            warnings.append(
-                f"SEAD timing: SEAD takeoff is {lead_before_tot} min before strike TOT — "
-                f"likely before carrier strike escorts launch (typical lead "
-                f"~{_STRIKE_ESCORT_TYPICAL_LAUNCH_MIN_BEFORE_TOT} min or less). "
-                "Move SEAD takeoff closer to TOT (e.g. 15–20 min) so escorts are up first."
-            )
-        elif lead_before_tot <= _STRIKE_ESCORT_TYPICAL_LAUNCH_MIN_BEFORE_TOT:
+        if lead_before_tot >= _STRIKE_ESCORT_TYPICAL_LAUNCH_MIN_BEFORE_TOT:
             ok.append(
-                f"OK: SEAD timing — takeoff {lead_before_tot} min before TOT, within window "
-                "after typical strike-escort launch."
+                f"OK: SEAD timing — takeoff {lead_before_tot} min before TOT; SEAD/SEAD-escort "
+                f"launch before typical strike package (~{_STRIKE_ESCORT_TYPICAL_LAUNCH_MIN_BEFORE_TOT} min pre-TOT)."
+            )
+        elif lead_before_tot < 20:
+            warnings.append(
+                f"SEAD timing: SEAD takeoff only {lead_before_tot} min before strike TOT — "
+                "Growlers may not reach the SAM box before strikers ingress; use ~30+ min "
+                "(see @sead_package minutes_before_strike_tot)."
+            )
+        else:
+            ok.append(
+                f"OK: SEAD timing — takeoff {lead_before_tot} min before TOT."
             )
 
     for mission_name in sorted(delayed_names):
         sched = schedule.get(mission_name) or {}
-        if not sched.get("starttime") and not sched.get("takeoff_time"):
+        if (
+            not sched.get("starttime")
+            and not sched.get("takeoff_time")
+            and not sched.get("time_on_target")
+        ):
             errors.append(
-                f"SEAD timing: mission '{mission_name}' has no starttime/TakeOffTime — "
-                "Growlers/SEAD-escort launch at scenario start and may engage Cuban CAP before "
-                "the strike package is airborne. Set ScenEdit_SetMission starttime/TakeOffTime "
-                "(see @sead_package) a few minutes before strike TOT, after escorts launch."
+                f"SEAD timing: mission '{mission_name}' has no starttime/TakeOffTime/TimeOnTargetStation — "
+                "Growlers/SEAD-escort launch at scenario start. Use TimeOnTargetStation (on-station) "
+                "or starttime/TakeOffTime ~25–35 min before strike TOT (see @sead_package)."
             )
             continue
+        sched_label = (
+            f"on-station {sched.get('time_on_target', '').split()[-1]}"
+            if sched.get("time_on_target")
+            else f"takeoff {sead_takeoff}"
+        )
         if strike_tot and sead_takeoff and tot_minutes is not None and takeoff_minutes is not None:
             if takeoff_minutes >= tot_minutes:
                 warnings.append(
-                    f"SEAD timing: '{mission_name}' takeoff {sead_takeoff} is not before "
+                    f"SEAD timing: '{mission_name}' {sched_label} is not before "
                     f"strike TOT {strike_tot}."
                 )
             elif tot_minutes - takeoff_minutes > 45:
                 warnings.append(
-                    f"SEAD timing: '{mission_name}' takeoff {sead_takeoff} is more than 45 min "
+                    f"SEAD timing: '{mission_name}' {sched_label} is more than 45 min "
                     f"before strike TOT {strike_tot} — may still fight MiGs alone for too long."
                 )
             else:
                 ok.append(
-                    f"OK: SEAD timing '{mission_name}' — takeoff {sead_takeoff}, strike TOT {strike_tot}."
+                    f"OK: SEAD timing '{mission_name}' — {sched_label}, strike TOT {strike_tot}."
                 )
         else:
             ok.append(
-                f"OK: SEAD timing '{mission_name}' — delayed launch via ScenEdit_SetMission."
+                f"OK: SEAD timing '{mission_name}' — delayed schedule via SetMission."
             )
 
     if growler_on_sead >= 4 and strike_tot and not sead_pkg and not sead_packages:
         warnings.append(
             "SEAD timing: carrier SEAD package detected but no @sead_package annotation — "
             "document takeoff time relative to strike TOT for maintainers."
+        )
+
+    sead_loop_m = re.search(
+        r"for\s+_\s*,\s*sead_mission\s+in\s+ipairs\s*\(\s*sead_timed_missions\s*\)\s*do\s*"
+        r"ScenEdit_SetMission\s*\([^,]+,\s*sead_mission\s*,\s*\{([^}]*)\}",
+        content,
+        re.IGNORECASE,
+    )
+    list_m = re.search(
+        r"local\s+sead_timed_missions\s*=\s*\{([^}]+)\}",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if sead_loop_m and list_m:
+        block = sead_loop_m.group(1)
+        min_req_m = re.search(r"MinAircraftReq\s*=\s*(\d+)", block, re.IGNORECASE)
+        flight_m = re.search(r"FlightSize\s*=\s*(\d+)", block, re.IGNORECASE)
+        use_fs_m = re.search(r"UseFlightSize\s*=\s*(true|false)", block, re.IGNORECASE)
+        min_req = int(min_req_m.group(1)) if min_req_m else None
+        flight_size = int(flight_m.group(1)) if flight_m else 1
+        use_flight_size = _parse_lua_bool(use_fs_m.group(1)) if use_fs_m else False
+        if min_req and use_flight_size:
+            trigger = min_req * flight_size
+            spawn_counts = {}
+            for spec in _parse_air_spawn_wing_specs(content):
+                spawn_counts[spec["mission"]] = (
+                    spawn_counts.get(spec["mission"], 0) + spec["count"]
+                )
+            for mission_name in re.findall(r"'([^']+)'", list_m.group(1)):
+                available = spawn_counts.get(mission_name, 0)
+                if available < trigger:
+                    errors.append(
+                        f"SEAD flight size: mission '{mission_name}' has {available} aircraft "
+                        f"but CMO requires {trigger} to launch "
+                        f"(MinAircraftReq={min_req} × FlightSize={flight_size}) — "
+                        "mission will never take off and aircraft are removed. "
+                        "Lower MinAircraftReq or add aircraft."
+                    )
+                else:
+                    ok.append(
+                        f"OK: SEAD flight size '{mission_name}' — {available} aircraft "
+                        f"meets trigger {trigger} (MinAircraftReq={min_req} × FlightSize={flight_size})."
+                    )
+
+    return errors, warnings, ok
+
+def _validate_isr_before_sead(content):
+    """MQ-4C on-station before SEAD on-station (TimeOnTargetStation preferred)."""
+    errors = []
+    warnings = []
+    ok = []
+
+    recon_m = re.search(r"local\s+isr_recon_min\s*=\s*(\d+)", content, re.IGNORECASE)
+    sead_station_m = re.search(
+        r"local\s+sead_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    if not (recon_m and sead_station_m):
+        return errors, warnings, ok
+
+    recon = int(recon_m.group(1))
+    sead_station = sead_station_m.group(1)
+    sead_min = _time_to_minutes(sead_station)
+    if sead_min is None:
+        return errors, warnings, ok
+
+    isr_station_m = re.search(
+        r"local\s+isr_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    if isr_station_m:
+        isr_station = isr_station_m.group(1)
+        isr_min = _time_to_minutes(isr_station)
+    else:
+        isr_min = sead_min - recon
+        isr_station = f"{isr_min // 60:02d}:{isr_min % 60:02d}:00"
+
+    if isr_min is None or isr_min + recon > sead_min:
+        errors.append(
+            f"ISR timing: ISR on-station {isr_station} + {recon} min recon exceeds "
+            f"SEAD on-station {sead_station}."
+        )
+        return errors, warnings, ok
+
+    if not re.search(
+        r"local\s+isr_on_station_time\s*=\s*cmo\.hms_subtract_minutes\s*\(\s*sead_on_station_time\s*,\s*isr_recon_min\s*\)",
+        content,
+        re.IGNORECASE,
+    ):
+        warnings.append(
+            "ISR timing: derive isr_on_station_time from sead_on_station_time minus isr_recon_min "
+            "(cmo.hms_subtract_minutes)."
+        )
+
+    schedule = _parse_mission_schedule_settings(content)
+    isr_sched = schedule.get("Caribbean ISR Orbit") or {}
+    sead_sched_any = any(
+        (schedule.get(m) or {}).get("time_on_target")
+        for m in (
+            "Wild Weasel SEAD West",
+            "Wild Weasel SEAD East",
+            "SEAD Escort West",
+            "SEAD Escort East",
+            "SEAD Escort CAP",
+        )
+    )
+    if isr_sched.get("time_on_target") or re.search(
+        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR Orbit",
+        content,
+        re.IGNORECASE,
+    ):
+        ok.append(
+            f"OK: ISR before SEAD — ISR on-station {isr_station} Z ({recon} min recon before SEAD on-station {sead_station})."
+        )
+    else:
+        warnings.append(
+            f"ISR timing: Caribbean ISR Orbit has no TimeOnTargetStation — drone may launch at H-hour."
+        )
+
+    if sead_sched_any or re.search(
+        r"set_patrol_on_station_schedule\s*\([\s\S]*?sead_on_station_dt",
+        content,
+        re.IGNORECASE,
+    ):
+        ok.append(
+            f"OK: SEAD on-station schedule — CreateMissionFlightPlan TIMEONTARGET {sead_station} (CMO backs off launch)."
+        )
+    else:
+        warnings.append(
+            "SEAD timing: prefer set_patrol_on_station_schedule / TimeOnTargetStation over starttime/TakeOffTime."
+        )
+
+    if not re.search(
+        r"add_mission_schedule_restore_event\s*\([\s\S]*?SEAD on-station schedule restore",
+        content,
+        re.IGNORECASE,
+    ):
+        warnings.append(
+            "ISR/SEAD timing: add_mission_schedule_restore_event (on_station) recommended at Play."
+        )
+    escort_per_zone_m = re.search(
+        r"local\s+sead_escort_per_zone\s*=\s*(\d+)", content, re.IGNORECASE
+    )
+    growler_count = len(
+        re.findall(
+            r"spawn_air_wing\s*\([^)]*Growler SEAD",
+            content,
+            re.IGNORECASE,
+        )
+    )
+    if escort_per_zone_m and growler_count >= 2:
+        per_zone = int(escort_per_zone_m.group(1))
+        if per_zone < 4:
+            warnings.append(
+                f"SEAD escort: sead_escort_per_zone={per_zone} is thin for 4 Growlers per box "
+                "(prefer ≥4 escorts per SEAD theater)."
+            )
+        else:
+            ok.append(
+                f"OK: SEAD escort — {per_zone} Hornets per theater ({per_zone * 2} total) for "
+                f"{growler_count * 4} Growlers."
+            )
+
+    sead_hold = re.search(
+        r"Wild Weasel SEAD West[\s\S]{0,400}?weapon_control_status_land\s*=\s*2",
+        content,
+        re.IGNORECASE,
+    )
+    if sead_hold:
+        ok.append("OK: SEAD land WCS HOLD until on-station — no HARM fires before ISR recon window.")
+    else:
+        warnings.append(
+            "ISR/SEAD timing: set weapon_control_status_land=2 (HOLD) on SEAD until on-station event sets FREE."
         )
 
     return errors, warnings, ok
@@ -3052,8 +3509,29 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
                 r"(?:M\.)?sync_naval_strike_tot\s*\(", content, re.IGNORECASE
             ):
                 has_timing = True
+        if not has_timing and re.search(
+            r"setup_solo_tlam_shooter\s*\(|setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(",
+            content,
+            re.IGNORECASE,
+        ):
+            if naval_pkg.get("tot") or sched.get("time_on_target"):
+                has_timing = True
 
-        if air_on_mission > 0 and mission_fps:
+        unified_air_tlam = bool(
+            re.search(
+                r"setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(|"
+                r"setup_csg_strike_on_air_strike\s*\(",
+                content,
+                re.IGNORECASE,
+            )
+            or (
+                naval_pkg.get("mission")
+                and strike_pkg.get("mission")
+                and naval_pkg["mission"].strip().lower()
+                == strike_pkg["mission"].strip().lower()
+            )
+        )
+        if air_on_mission > 0 and mission_fps and not unified_air_tlam:
             errors.append(
                 f"Naval strike timing: '{label}' on Strike '{mission}' shares the mission with "
                 f"{air_on_mission} aircraft and CreateMissionFlightPlan — Tomahawks launch at "
@@ -3061,6 +3539,13 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
                 "Strike (e.g. Caribbean TLAM Salvo) with starttime and TimeOnTargetStation."
             )
             continue
+        if air_on_mission > 0 and mission_fps and unified_air_tlam:
+            if not has_timing and not (naval_pkg.get("launch") and naval_pkg.get("tot")):
+                errors.append(
+                    f"Naval strike timing: '{label}' on shared Strike '{mission}' needs "
+                    "starttime + TimeOnTargetStation via setup_tlam_on_air_strike (see @naval_package)."
+                )
+                continue
 
         if not has_timing:
             errors.append(
@@ -3092,13 +3577,18 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
             elif lead > _TLAM_LAUNCH_MAX_BEFORE_TOT:
                 warnings.append(
                     f"Naval strike timing: '{label}' launch {lead} min before TOT — "
-                    "TLAMs may impact long before the air strike window."
+                    "TLAMs may impact long before the strike package TOT window."
                 )
             else:
                 ok.append(
                     f"OK: Naval strike timing '{label}' — launch {launch_time}, "
                     f"{lead} min before strike TOT {strike_tot}."
                 )
+        elif sched.get("time_on_target") and strike_tot:
+            ok.append(
+                f"OK: Naval strike timing '{label}' — TOT sync {strike_tot} "
+                f"(TimeOnTargetStation; CMO auto-launch from range)."
+            )
         else:
             ok.append(
                 f"OK: Naval strike timing '{label}' on '{mission}' — delayed via SetMission schedule."
@@ -3150,7 +3640,8 @@ def _validate_early_patrol_support_launches(content, mission_map):
     for name, role in mission_map.items():
         if role not in early_roles:
             continue
-        if schedule.get(name, {}).get("starttime"):
+        sched_row = schedule.get(name, {})
+        if sched_row.get("starttime") or sched_row.get("time_on_target"):
             continue
         if name not in missions_with_air:
             continue
@@ -3163,7 +3654,7 @@ def _validate_early_patrol_support_launches(content, mission_map):
     if unscheduled:
         warnings.append(
             "Strike timing: patrol/support missions without starttime launch at scenario start "
-            f"while air strike uses CreateMissionFlightPlan: {', '.join(sorted(unscheduled))}. "
+            f"while strike package uses CreateMissionFlightPlan: {', '.join(sorted(unscheduled))}. "
             "Set starttime if early CAP/AEW/ISR orbit is undesired (SEAD/naval have dedicated checks)."
         )
     return warnings, ok
