@@ -200,13 +200,31 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - **Munitions era**: strike loadouts with only unguided names in modern years (see §1).
   - **Role fit**: carrier-capable variants, CSG composition, SEAD=Patrol, tanker for long-range strike — by **category/name**, not a single national inventory.
 - **What it does not do**: no requirement for "at least 4× stealth" or "Super Hornet only"; it does not replace scenario design. Deliberate obsolete opponents (MiG-21, SA-2) in 2026 are allowed — expect decommission warnings unless explained in comments.
-- **Workflow**: year → DB series (§16) → search suitable units → precision/standoff loadouts for that year → preflight.
+- **Workflow**: year → DB series (§17) → search suitable units → precision/standoff loadouts for that year → preflight.
 - **Nationality / OperatorCountry (per hull) — mandatory**: The DB `OperatorCountry` of each spawned/placed unit must match its intended nationality. A **coalition side name** (e.g. `NATO Air Defense`, which hosts Polish, Dutch, German and US hulls) **cannot** enforce this — the side-level operator check passes anything. Declare intent explicitly with an inline `-- @nationality <Country>` annotation on each `spawn_air_wing` / `add_air_unit_checked` / `place_ship` / `place_sub` / `place_sam` line (on the same line or the line directly above the call).
   - *Preflight*: `--validate-scenario` resolves the DB `OperatorCountry` for the dbid and **errors** on mismatch. `NATO` operator matches `@nationality NATO` only; **Junkyard/Generic do not prove** a declared `@nationality` (warning). Bracketed forms (`Russia [1992-]`, `Germany [FRG/Reunified]`) and common aliases (dutch→Netherlands, polish→Poland, usa→United States, …) are normalized.
   - *Pitfall*: same airframe name, different national DBID — e.g. F-35A id **3326** is **Norwegian**, id **3902** is **Dutch**; a Polish "F-16C" labelled with a US-operated dbid is also wrong. Always confirm the operator before delivery (`db_search.py "<unit>"` → **Operator** column shows id + country name).
   - *Junkyard/Generic — last resort only*: CMO duplicates many units under `OperatorCountry` **Junkyard** (id **9999**) or **Generic** — same `Name`, no real nation. **Prefer** a national or NATO-operated DBID whenever one exists (e.g. E-3C **304** = Junkyard → use **3186** NATO, **209** US, or **97** UK). Use Junkyard/Generic **only when no suitable national variant exists** in the DB for that role; document why in the scenario header and add `-- @operator_last_resort` on the spawn line. Preflight **warns** on Junkyard/Generic (stronger warning when national alternatives exist); wrong-nationality mismatches remain **errors**, Junkyard+`@nationality` mismatch is a **warning**.
 
-## 16. Database Series Mapping (DB3K vs CWDB)
+## 16. Sides must exist before use (mandatory)
+- **Blank scenario rule**: Lua that builds a scenario from scratch must call `ScenEdit_AddSide({side='SideName'})` for each side **before** any `ScenEdit_SetSidePosture`, `ScenEdit_SetSideOptions`, `ScenEdit_AddMission`, `ScenEdit_SetMission`, `ScenEdit_SetDoctrine`, `spawn_air_wing` / `place_*`, or `ScenEdit_AddUnit`.
+- **Symptom in CMO**: `ScenEdit_SetSidePosture 0 : ,Unable to identify Side-A!` when posture runs against a side that was never added.
+- **Check**: `python scripts/db_search.py --validate-scenario generated/<file>.lua` reports **`Sides:`** errors for missing or out-of-order `ScenEdit_AddSide`. Resolves `local SIDE_X = 'France'` aliases used in AddSide/posture calls.
+- **Order**: first reference to a side must be **after** its `ScenEdit_AddSide` line (not only existence).
+
+### Geo placement — land vs water (mandatory)
+- **Ship / sub** (`place_ship`, `place_sub`): coordinates must be **water** (`World_GetElevation` ≤ 0 in Lua; preflight uses `global_land_mask`). CMO: *cannot place ship over land*.
+- **Facility / land unit** (`place_base`, `place_sam`, `ScenEdit_AddUnit` type `Facility` with lat/lon): must be **land** (elevation > 0). CMO: *This point appears to be underwater. Placement aborted!*
+- **Check**: `--validate-scenario` reports **`Geo placement:`** for every independently placed unit (not aircraft on `base=`). Install `global-land-mask` (see `requirements.txt`).
+- **Runtime**: `scenario_bootstrap.lua` — `place_base` / `place_sam` call `_require_land_placement`; `place_ship` / `place_sub` keep existing elevation guards.
+
+### Reference points (mandatory `side=`)
+- **Rule**: every `ScenEdit_AddReferencePoint({...})` must set **`side = 'SideName'`** (or `PlayerSide`). RPs are stored per side; the same `name` may exist on multiple sides.
+- **Symptom in CMO**: `ScenEdit_AddReferencePoint 0 : ,Missing 'Side' please choose one of PlayerSide, France, Libya`.
+- **Mission zones**: a patrol/support `zone = { 'RP-A', 'RP-B' }` on side `France` requires `AddReferencePoint` rows with **`side='France'`** and those exact names (duplicate coords on `Libya` if a Libya mission reuses the same RP names).
+- **Check**: `--validate-scenario` reports **`Reference point:`** errors for missing `side=`, unknown side, or zone/RP side mismatch.
+
+## 17. Database Series Mapping (DB3K vs CWDB)
 - **Hard year rule**:
   - If `Year > 1980` → use `DB3K`.
   - If `Year < 1980` → use `CWDB`.

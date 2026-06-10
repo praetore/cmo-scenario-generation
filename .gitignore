@@ -33,3 +33,10 @@ build/
 
 # IDE
 .idea/workspace.xml
+
+# References
+*.pdf
+*.docx
+*.doc
+*.txt
+*.rtf

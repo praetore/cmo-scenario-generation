@@ -1619,6 +1619,135 @@ _ADDUNIT_BLOCK_RE = re.compile(
 )
 
 
+def _validate_sides_created_before_use(content):
+    """
+    CMO Lua on a blank scenario requires ScenEdit_AddSide before SetSidePosture,
+    missions, or unit spawn — otherwise 'Unable to identify Side-A!'.
+    """
+    errors = []
+    warnings = []
+    ok = []
+
+    added, referenced = _parse_scenario_sides(content)
+    if not referenced:
+        return errors, warnings, ok
+
+    if not added:
+        sample = ", ".join(sorted(referenced.keys())[:4])
+        errors.append(
+            "Sides: script references side(s) "
+            f"({sample}{'...' if len(referenced) > 4 else ''}) but has no "
+            "ScenEdit_AddSide({side='...'}) — CMO reports 'Unable to identify Side-A!' "
+            "on a blank scenario. Add AddSide for every side before SetSidePosture/missions/spawn."
+        )
+        return errors, warnings, ok
+
+    for side in sorted(referenced.keys()):
+        ref_line, api = referenced[side]
+        if side not in added:
+            errors.append(
+                f"Sides: '{side}' used at line {ref_line} ({api}) but never created with "
+                f"ScenEdit_AddSide({{side='{side}'}}) — CMO cannot resolve the side on a blank scenario."
+            )
+            continue
+        if ref_line < added[side]:
+            errors.append(
+                f"Sides: '{side}' first used at line {ref_line} ({api}) before "
+                f"ScenEdit_AddSide at line {added[side]} — create the side before posture/missions/units."
+            )
+
+    missing = [s for s in referenced if s not in added]
+    if not missing and not any(e.startswith("Sides:") and "before" in e for e in errors):
+        ok.append(
+            f"OK: Sides — {len(added)} ScenEdit_AddSide call(s) cover all "
+            f"{len(referenced)} referenced side(s) in correct order."
+        )
+    elif not missing and errors:
+        ok.append(
+            f"OK: Sides — all {len(referenced)} referenced side(s) have ScenEdit_AddSide "
+            "(fix ordering errors above)."
+        )
+
+    return errors, warnings, ok
+
+
+def _validate_reference_points(content):
+    """
+    CMO requires side= on every ScenEdit_AddReferencePoint (RPs are per-side).
+    Mission patrol zones must reference RPs created on the same side as the mission.
+    """
+    errors = []
+    warnings = []
+    ok = []
+
+    rp_calls = _parse_reference_point_calls(content)
+    if not rp_calls:
+        return errors, warnings, ok
+
+    added_sides, _referenced_sides = _parse_scenario_sides(content)
+    missing_side = [r for r in rp_calls if not r["has_side"]]
+    for row in missing_side:
+        label = row["name"] or "(unnamed)"
+        errors.append(
+            f"Reference point: '{label}' at line {row['line']} has no side= in "
+            "ScenEdit_AddReferencePoint — CMO reports Missing 'Side' "
+            "(choose PlayerSide or a side from ScenEdit_AddSide)."
+        )
+
+    unresolved_side = [
+        r for r in rp_calls if r["has_side"] and not r["side"]
+    ]
+    for row in unresolved_side:
+        label = row["name"] or "(unnamed)"
+        errors.append(
+            f"Reference point: '{label}' at line {row['line']} has side= but the "
+            "value is not a string literal or local SIDE_* alias — preflight cannot verify it."
+        )
+
+    for row in rp_calls:
+        if not row["side"] or not row["has_side"]:
+            continue
+        if added_sides and row["side"] not in added_sides:
+            label = row["name"] or "(unnamed)"
+            errors.append(
+                f"Reference point: '{label}' at line {row['line']} uses side='{row['side']}' "
+                "but that side has no ScenEdit_AddSide — CMO cannot resolve the side."
+            )
+        elif added_sides and row["line"] < added_sides[row["side"]]:
+            label = row["name"] or "(unnamed)"
+            errors.append(
+                f"Reference point: '{label}' at line {row['line']} is created before "
+                f"ScenEdit_AddSide for '{row['side']}' at line {added_sides[row['side']]}."
+            )
+
+    rp_index = _reference_points_by_side_name(content)
+    for side, mission, zone_names in _parse_mission_side_zones(content):
+        for rp_name in zone_names:
+            if (side, rp_name) not in rp_index:
+                errors.append(
+                    f"Reference point: mission '{mission}' on side '{side}' uses zone RP "
+                    f"'{rp_name}' but no ScenEdit_AddReferencePoint declares "
+                    f"{{ side='{side}', name='{rp_name}', ... }} — zones are per-side in CMO."
+                )
+
+    if not missing_side and not unresolved_side:
+        declared = len([r for r in rp_calls if r["has_side"] and r["side"]])
+        if declared:
+            ok.append(
+                f"OK: Reference points — {declared} AddReferencePoint call(s) declare side=."
+            )
+        zone_checks = _parse_mission_side_zones(content)
+        if zone_checks and not any(
+            e.startswith("Reference point: mission") for e in errors
+        ):
+            ok.append(
+                f"OK: Reference points — mission zone RPs match side-tagged AddReferencePoint "
+                f"({len(zone_checks)} zoned mission(s))."
+            )
+
+    return errors, warnings, ok
+
+
 def _validate_civilian_flight_paths(content):
     """
     Civilian air traffic must have realistic flight paths (logic_checks §11): a plotted
@@ -3020,71 +3149,91 @@ def _validate_bomber_and_sead_escort_packages(db, assignments, mission_map, seri
     return errors, warnings
 
 
-def _validate_ship_sub_water_placement(ships):
-    """Ships and submarines must sit over water; CMO rejects naval units on land.
+def _validate_unit_geo_placement(units):
+    """Land vs water placement for every independently placed unit.
 
-    Uses the optional ``global_land_mask`` package (NOAA-derived ~1 km land/ocean
-    mask) to flag ``place_ship`` / ``place_sub`` coordinates that fall on land. This
-    is the preflight counterpart to the in-Lua ``World_GetElevation`` guard in
-    ``scenario_bootstrap.lua``; it catches the common "cannot place ship over land"
-    failure before the script is ever loaded in CMO.
+    - **Ship / sub** (`place_ship`, `place_sub`, AddUnit Ship/Sub): must be **water**
+      (CMO: *cannot place ship over land*).
+    - **Facility** (`place_base`, `place_sam`, AddUnit Facility): must be **land**
+      (CMO: *Placement aborted — underwater*).
 
-    When the package is not installed the check degrades to a single warning so the
-    rest of preflight still runs.
+    Uses ``global_land_mask`` (~1 km). Preflight counterpart to ``World_GetElevation``
+    guards in ``scenario_bootstrap.lua``.
     """
     errors = []
     warnings = []
     ok = []
-    if not ships:
+    if not units:
         return errors, warnings, ok
 
     try:
         from global_land_mask import globe
     except ImportError:
         warnings.append(
-            "Ship/sub water placement: global_land_mask not installed — land/water check "
-            "skipped. Run 'pip install global-land-mask' (see requirements.txt) so preflight "
-            "can catch ships/subs placed on land before CMO import."
+            "Geo placement: global_land_mask not installed — land/water checks skipped. "
+            "Run 'pip install global-land-mask' (see requirements.txt)."
         )
         return errors, warnings, ok
 
-    checked = 0
-    for unit in ships:
+    naval_checked = 0
+    land_checked = 0
+    for unit in units:
         lat = unit.get("lat")
         lon = unit.get("lon")
         if lat is None or lon is None:
             continue
-        kind = "submarine" if unit.get("kind") == "sub" else "ship"
+        kind = unit.get("kind") or "unknown"
+        source = unit.get("source") or "spawn"
         label = unit.get("name") or f"DBID {unit.get('dbid')}"
         side = unit.get("side") or "?"
+        line = unit.get("line")
+        where = f"line {line} " if line else ""
         if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
             warnings.append(
-                f"Ship/sub water placement: {kind} '{label}' (side {side}) has out-of-range "
-                f"coordinates lat={lat}, lon={lon} — skipped."
+                f"Geo placement: {kind} '{label}' ({where}{source}, side {side}) has "
+                f"out-of-range coordinates lat={lat}, lon={lon} — skipped."
             )
             continue
-        checked += 1
         try:
             is_land = bool(globe.is_land(lat, lon))
         except Exception as exc:  # pragma: no cover - defensive
             warnings.append(
-                f"Ship/sub water placement: could not evaluate {kind} '{label}' "
-                f"(lat={lat}, lon={lon}): {exc}"
+                f"Geo placement: could not evaluate '{label}' (lat={lat}, lon={lon}): {exc}"
             )
             continue
-        if is_land:
-            errors.append(
-                f"Ship/sub placement over land: {kind} '{label}' (side {side}) at "
-                f"lat={lat}, lon={lon} is on land per global_land_mask — CMO will reject it "
-                f"('cannot place ship over land'). Move to open water (elevation <= 0)."
-            )
 
-    if checked and not errors:
+        if kind in ("ship", "sub"):
+            naval_checked += 1
+            if is_land:
+                noun = "submarine" if kind == "sub" else "ship"
+                errors.append(
+                    f"Geo placement: {noun} '{label}' ({where}{source}, side {side}) at "
+                    f"lat={lat}, lon={lon} is on land — CMO rejects "
+                    f"('cannot place ship over land'). Use open water."
+                )
+        elif kind == "facility":
+            land_checked += 1
+            if not is_land:
+                errors.append(
+                    f"Geo placement: facility '{label}' ({where}{source}, side {side}) at "
+                    f"lat={lat}, lon={lon} is underwater per global_land_mask — CMO aborts "
+                    f"facility placement ('This point appears to be underwater'). Nudge coords inland."
+                )
+
+    if naval_checked and not any("ship" in e or "submarine" in e for e in errors):
         ok.append(
-            f"OK: Ship/sub water placement — {checked} naval unit(s) over water "
-            f"(global_land_mask)."
+            f"OK: Geo placement — {naval_checked} naval unit(s) over water (global_land_mask)."
+        )
+    if land_checked and not any("facility" in e for e in errors):
+        ok.append(
+            f"OK: Geo placement — {land_checked} facility/land unit(s) on land (global_land_mask)."
         )
     return errors, warnings, ok
+
+
+def _validate_ship_sub_water_placement(ships):
+    """Backward-compatible wrapper — prefer ``_parse_all_geo_placements`` + ``_validate_unit_geo_placement``."""
+    return _validate_unit_geo_placement(ships)
 
 
 __all__ = sorted(

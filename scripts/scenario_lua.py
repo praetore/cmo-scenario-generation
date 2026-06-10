@@ -319,81 +319,170 @@ def _resolve_lua_coord(expr, consts):
         return consts[sub.group(1)] - float(sub.group(2))
     return None
 
+def _resolve_side_token(side_expr, lua_vars):
+    return _resolve_lua_side_token(side_expr, lua_vars) or side_expr.strip().strip("'\"")
+
+
+def _append_geo_unit(units, body, match, kind, source, side_expr, name, dbid, lat_expr, lon_expr, var=None):
+    consts = _parse_lua_coord_pairs(body)
+    lua_vars = _parse_lua_string_vars(body)
+    lat = _resolve_lua_coord(lat_expr, consts)
+    lon = _resolve_lua_coord(lon_expr, consts)
+    if lat is None or lon is None:
+        return
+    units.append(
+        {
+            "kind": kind,
+            "source": source,
+            "side": _resolve_side_token(side_expr, lua_vars),
+            "name": name,
+            "dbid": dbid,
+            "lat": lat,
+            "lon": lon,
+            "var": var,
+            "line": _line_number_at(body, match.start()),
+        }
+    )
+
+
 def _parse_ship_placements(content):
-    """List of {side, name, dbid, lat, lon, var?} from place_ship in Lua."""
+    """List of {side, name, dbid, lat, lon, var?, kind='ship'} from place_ship in Lua."""
+    body = _scenario_lua_body(content)
     ships = []
-    consts = _parse_lua_coord_pairs(content)
     assign_pattern = re.compile(
-        r"(?:local\s+)?(\w+)\s*=\s*place_ship\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+        r"(?:local\s+)?(\w+)\s*=\s*place_ship\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
         re.IGNORECASE,
     )
     direct_pattern = re.compile(
-        r"^[ \t]*place_ship\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+        r"^[ \t]*place_ship\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
         re.IGNORECASE | re.MULTILINE,
     )
-    for match in assign_pattern.finditer(content):
-        lat = _resolve_lua_coord(match.group(5), consts)
-        lon = _resolve_lua_coord(match.group(6), consts)
-        if lat is None or lon is None:
-            continue
-        ships.append(
-            {
-                "side": match.group(2),
-                "name": match.group(3),
-                "dbid": int(match.group(4)),
-                "lat": lat,
-                "lon": lon,
-                "var": match.group(1),
-            }
+    for match in assign_pattern.finditer(body):
+        _append_geo_unit(
+            ships, body, match, "ship", "place_ship",
+            match.group(2), match.group(3), int(match.group(4)),
+            match.group(5), match.group(6), var=match.group(1),
         )
-    for match in direct_pattern.finditer(content):
-        lat = _resolve_lua_coord(match.group(4), consts)
-        lon = _resolve_lua_coord(match.group(5), consts)
-        if lat is None or lon is None:
-            continue
-        ships.append(
-            {
-                "side": match.group(1),
-                "name": match.group(2),
-                "dbid": int(match.group(3)),
-                "lat": lat,
-                "lon": lon,
-                "var": None,
-            }
+    for match in direct_pattern.finditer(body):
+        _append_geo_unit(
+            ships, body, match, "ship", "place_ship",
+            match.group(1), match.group(2), int(match.group(3)),
+            match.group(4), match.group(5),
         )
     return ships
 
+
 def _parse_sub_placements(content):
     """List of {side, name, dbid, lat, lon, var?, kind='sub'} from place_sub in Lua."""
+    body = _scenario_lua_body(content)
     subs = []
-    consts = _parse_lua_coord_pairs(content)
     assign_pattern = re.compile(
-        r"(?:local\s+)?(\w+)\s*=\s*place_sub\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+        r"(?:local\s+)?(\w+)\s*=\s*place_sub\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
         re.IGNORECASE,
     )
-    for match in assign_pattern.finditer(content):
-        lat = _resolve_lua_coord(match.group(5), consts)
-        lon = _resolve_lua_coord(match.group(6), consts)
-        if lat is None or lon is None:
-            continue
-        subs.append(
-            {
-                "side": match.group(2),
-                "name": match.group(3),
-                "dbid": int(match.group(4)),
-                "lat": lat,
-                "lon": lon,
-                "var": match.group(1),
-                "kind": "sub",
-            }
+    for match in assign_pattern.finditer(body):
+        _append_geo_unit(
+            subs, body, match, "sub", "place_sub",
+            match.group(2), match.group(3), int(match.group(4)),
+            match.group(5), match.group(6), var=match.group(1),
         )
     return subs
+
+
+def _parse_facility_placements(content):
+    """place_base / place_sam and ScenEdit_AddUnit type Facility with explicit lat/lon."""
+    body = _scenario_lua_body(content)
+    facilities = []
+    patterns = (
+        (
+            "facility",
+            "place_base",
+            re.compile(
+                r"(?:local\s+)?(\w+)\s*=\s*place_base\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE,
+            ),
+            lambda m: (m.group(2), m.group(3), None, m.group(4), m.group(5), m.group(1)),
+        ),
+        (
+            "facility",
+            "place_sam",
+            re.compile(
+                r"(?:local\s+)?(\w+)\s*=\s*place_sam\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE,
+            ),
+            lambda m: (m.group(2), m.group(3), int(m.group(4)), m.group(5), m.group(6), m.group(1)),
+        ),
+        (
+            "facility",
+            "place_base",
+            re.compile(
+                r"^[ \t]*place_base\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE | re.MULTILINE,
+            ),
+            lambda m: (m.group(1), m.group(2), None, m.group(3), m.group(4), None),
+        ),
+        (
+            "facility",
+            "place_sam",
+            re.compile(
+                r"^[ \t]*place_sam\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE | re.MULTILINE,
+            ),
+            lambda m: (m.group(1), m.group(2), int(m.group(3)), m.group(4), m.group(5), None),
+        ),
+    )
+    for kind, source, pattern, extract in patterns:
+        for match in pattern.finditer(body):
+            side, name, dbid, lat_expr, lon_expr, var = extract(match)
+            _append_geo_unit(
+                facilities, body, match, kind, source,
+                side, name, dbid, lat_expr, lon_expr, var=var,
+            )
+
+    add_unit_pattern = re.compile(
+        r"ScenEdit_AddUnit\s*\(\s*\{([^}]*)\}\s*\)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in add_unit_pattern.finditer(body):
+        block = match.group(1)
+        if not re.search(r"type\s*=\s*'Facility'", block, re.IGNORECASE):
+            continue
+        if re.search(r"\bbase\s*=", block, re.IGNORECASE):
+            continue
+        name_m = re.search(r"\bunitname\s*=\s*'([^']*)'", block, re.IGNORECASE)
+        side_m = re.search(r"\bside\s*=\s*([^,}\n]+)", block, re.IGNORECASE)
+        lat_m = re.search(r"\blatitude\s*=\s*([^,}\n]+)", block, re.IGNORECASE)
+        lon_m = re.search(r"\blongitude\s*=\s*([^,}\n]+)", block, re.IGNORECASE)
+        dbid_m = re.search(r"\bdbid\s*=\s*(\d+)", block, re.IGNORECASE)
+        if not (side_m and lat_m and lon_m):
+            continue
+        _append_geo_unit(
+            facilities,
+            body,
+            match,
+            "facility",
+            "AddUnit",
+            side_m.group(1),
+            name_m.group(1) if name_m else "(unnamed facility)",
+            int(dbid_m.group(1)) if dbid_m else None,
+            lat_m.group(1),
+            lon_m.group(1),
+        )
+    return facilities
+
 
 def _parse_naval_placements(content):
     ships = _parse_ship_placements(content)
     for sub in _parse_sub_placements(content):
         ships.append(sub)
     return ships
+
+
+def _parse_all_geo_placements(content):
+    """Every independently geo-placed unit: ship, sub, facility (land vs water rules)."""
+    units = _parse_naval_placements(content)
+    units.extend(_parse_facility_placements(content))
+    return units
 
 def _parse_carrier_vars_with_air_wing(content):
     carrier_vars = set(
@@ -2222,6 +2311,228 @@ def _side_has_aaw_escort_with_aa_loadout(db, side, assignments, mission_map, ser
         if _infer_mission_role(mission_name, mission_map) == "aaw":
             return True
     return False
+
+
+def _scenario_lua_body(content):
+    """Scenario script only (exclude appended bootstrap for static side analysis)."""
+    marker = "-- [preflight: scenario_bootstrap.lua]"
+    if marker in content:
+        return content.split(marker, 1)[0]
+    return content
+
+
+def _resolve_lua_side_token(token, lua_vars):
+    """Resolve 'France', SIDE_FR, or \"Libya\" to a side name string."""
+    if not token:
+        return None
+    token = token.strip()
+    if (token.startswith("'") and token.endswith("'")) or (
+        token.startswith('"') and token.endswith('"')
+    ):
+        return token.strip("'\"")
+    return lua_vars.get(token.lower())
+
+
+def _line_number_at(content, index):
+    return content[:index].count("\n") + 1
+
+
+def _parse_scenario_sides(content):
+    """
+    Collect sides created via ScenEdit_AddSide and sides referenced by ScenEdit_* / spawn helpers.
+
+    Returns:
+        added: dict side_name -> line number of first ScenEdit_AddSide
+        referenced: dict side_name -> (line number of first use, api hint)
+    """
+    body = _scenario_lua_body(content)
+    lua_vars = _parse_lua_string_vars(body)
+    added = {}
+    referenced = {}
+
+    def note_added(side, line_no):
+        if side and side not in added:
+            added[side] = line_no
+
+    def note_ref(side, line_no, api):
+        if side and side not in referenced:
+            referenced[side] = (line_no, api)
+
+    for match in re.finditer(
+        r"ScenEdit_AddSide\s*\(\s*\{[^}]*\bside\s*=\s*([^,}]+)",
+        body,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        side = _resolve_lua_side_token(match.group(1), lua_vars)
+        note_added(side, _line_number_at(body, match.start()))
+
+    ref_patterns = (
+        (
+            "SetSidePosture",
+            re.compile(
+                r"ScenEdit_SetSidePosture\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,",
+                re.IGNORECASE,
+            ),
+            lambda m: (
+                _resolve_lua_side_token(m.group(1), lua_vars),
+                _resolve_lua_side_token(m.group(2), lua_vars),
+            ),
+        ),
+        (
+            "SetSideOptions",
+            re.compile(
+                r"ScenEdit_SetSideOptions\s*\(\s*\{[^}]*\bside\s*=\s*([^,}]+)",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "AddMission",
+            re.compile(r"ScenEdit_AddMission\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "SetMission",
+            re.compile(r"ScenEdit_SetMission\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "SetDoctrine",
+            re.compile(
+                r"ScenEdit_SetDoctrine\s*\(\s*\{[^}]*\bside\s*=\s*([^,}]+)",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "CreateMissionFlightPlan",
+            re.compile(
+                r"ScenEdit_CreateMissionFlightPlan\s*\(\s*([^,]+)\s*,",
+                re.IGNORECASE,
+            ),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "spawn_air_wing",
+            re.compile(r"spawn_air_wing\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "add_air_unit_checked",
+            re.compile(r"add_air_unit_checked\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "place_ship",
+            re.compile(r"place_ship\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "place_sub",
+            re.compile(r"place_sub\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "place_sam",
+            re.compile(r"place_sam\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "place_base",
+            re.compile(r"place_base\s*\(\s*([^,]+)\s*,", re.IGNORECASE),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+        (
+            "configure_strike_timing",
+            re.compile(
+                r"configure_strike_timing\s*\(\s*\{[^}]*\bside\s*=\s*([^,}]+)",
+                re.IGNORECASE | re.DOTALL,
+            ),
+            lambda m: (_resolve_lua_side_token(m.group(1), lua_vars),),
+        ),
+    )
+
+    for api, pattern, extract in ref_patterns:
+        for match in pattern.finditer(body):
+            line_no = _line_number_at(body, match.start())
+            for side in extract(match):
+                note_ref(side, line_no, api)
+
+    for match in re.finditer(
+        r"ScenEdit_AddUnit\s*\(\s*\{([^}]*)\}\s*\)",
+        body,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        block = match.group(1)
+        side_m = re.search(r"\bside\s*=\s*([^,}\n]+)", block, re.IGNORECASE)
+        if side_m:
+            side = _resolve_lua_side_token(side_m.group(1), lua_vars)
+            note_ref(side, _line_number_at(body, match.start()), "AddUnit")
+
+    return added, referenced
+
+
+def _parse_reference_point_calls(content):
+    """
+    Each ScenEdit_AddReferencePoint({...}) call.
+
+    Returns list of dicts: name, side (resolved or None), line, has_side (bool).
+    """
+    body = _scenario_lua_body(content)
+    lua_vars = _parse_lua_string_vars(body)
+    rows = []
+    pattern = re.compile(
+        r"ScenEdit_AddReferencePoint\s*\(\s*\{([^}]*)\}\s*\)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in pattern.finditer(body):
+        block = match.group(1)
+        name_m = re.search(r"\bname\s*=\s*'([^']*)'", block, re.IGNORECASE)
+        side_m = re.search(r"\bside\s*=\s*([^,}\n]+)", block, re.IGNORECASE)
+        side = None
+        has_side = side_m is not None
+        if side_m:
+            side = _resolve_lua_side_token(side_m.group(1), lua_vars)
+        rows.append(
+            {
+                "name": name_m.group(1) if name_m else None,
+                "side": side,
+                "line": _line_number_at(body, match.start()),
+                "has_side": has_side,
+            }
+        )
+    return rows
+
+
+def _parse_mission_side_zones(content):
+    """(side, mission_name, [zone_rp_names]) from ScenEdit_AddMission with zone={...}."""
+    body = _scenario_lua_body(content)
+    lua_vars = _parse_lua_string_vars(body)
+    rows = []
+    header = re.compile(
+        r"ScenEdit_AddMission\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,",
+        re.IGNORECASE,
+    )
+    for match in header.finditer(body):
+        side = _resolve_lua_side_token(match.group(1), lua_vars)
+        mission = _resolve_lua_mission_name(match.group(2), lua_vars)
+        snippet = body[match.end() : match.end() + 800]
+        zone_m = re.search(r"zone\s*=\s*\{([^}]+)\}", snippet, re.IGNORECASE)
+        if not zone_m:
+            continue
+        zone_names = re.findall(r"'([^']+)'", zone_m.group(1))
+        if side and mission and zone_names:
+            rows.append((side, mission, zone_names))
+    return rows
+
+
+def _reference_points_by_side_name(content):
+    """Set of (side, rp_name) from AddReferencePoint calls that declare side=."""
+    out = set()
+    for row in _parse_reference_point_calls(content):
+        if row["has_side"] and row["side"] and row["name"]:
+            out.add((row["side"], row["name"]))
+    return out
 
 
 __all__ = sorted(name for name in globals() if not name.startswith("__"))

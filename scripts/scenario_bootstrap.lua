@@ -56,7 +56,7 @@
 --
 --   Spawn (nil + ERROR print on failure; place_ship/place_sub check elevation)
 --     place_base(side, name, lat, lon)   generic airfield dbid from state.BASE_FACILITY_DBID
---     place_ship, place_sub, place_sam
+--     place_ship, place_sub, place_sam (place_base/place_sam/ship/sub check World_GetElevation)
 --     add_air_unit_checked(side, name, dbid, base_guid, loadoutid, mission, escort?)
 --     spawn_air_wing(side, prefix, count, dbid, loadoutid, mission, base_guid, escort?)
 --
@@ -1279,7 +1279,24 @@ function M.spawn_air_wing(side, prefix, count, dbid, loadoutid, mission_name, ba
     end
 end
 
+function M._require_land_placement(unitname, latitude, longitude)
+    local elev = World_GetElevation({ latitude = latitude, longitude = longitude })
+    if elev == nil then
+        print('WARNING: World_GetElevation nil for ' .. unitname .. ' at ' .. latitude .. ',' .. longitude)
+        return true
+    end
+    if elev <= 0 then
+        print('ERROR: Facility placement underwater at ' .. unitname .. ' at ' .. latitude .. ',' .. longitude ..
+            ' (elevation=' .. tostring(elev) .. 'm)')
+        return false
+    end
+    return true
+end
+
 function M.place_base(side, unitname, latitude, longitude)
+    if not M._require_land_placement(unitname, latitude, longitude) then
+        return nil
+    end
     local base = ScenEdit_AddUnit({
         type = 'Facility',
         unitname = unitname,
@@ -1296,6 +1313,9 @@ function M.place_base(side, unitname, latitude, longitude)
 end
 
 function M.place_sam(side, unitname, dbid, latitude, longitude)
+    if not M._require_land_placement(unitname, latitude, longitude) then
+        return nil
+    end
     local sam = ScenEdit_AddUnit({
         type = 'Facility',
         unitname = unitname,

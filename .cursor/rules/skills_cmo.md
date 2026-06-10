@@ -22,7 +22,8 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
   - **`Facility`:** Most land facilities (airfields, SAM) cannot be placed in open ocean — `Placement aborted`. Maritime facilities (ports/platforms) may be on water if the DB unit allows it.
   - **`Ship` / `Sub`:** **Water only** (not on land). Otherwise CMO reports errors such as `cannot place ship over land`. Check coordinates on the map or with `World_GetElevation`: elevation **> 0** = land.
   - **Best practice:** Use map/satellite imagery or the CMO cursor; when in doubt, check elevation before spawn.
-  - **Lua helper** (recommended for `place_ship` / `place_sub`):
+  - **Land vs water (mandatory):** Ships/subs → water only; facilities (`place_base`, `place_sam`) → land only (`elevation > 0`). Bootstrap helpers enforce via `World_GetElevation`; preflight uses `global_land_mask` on **every** `place_ship` / `place_sub` / `place_base` / `place_sam` / standalone `AddUnit Facility` (`Geo placement:` errors).
+  - **Lua helper** (ships/subs — also built into `cmo.place_ship` / `place_sub`):
 
   ```lua
   local elev = World_GetElevation({latitude=lat, longitude=lon})
@@ -97,11 +98,12 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 ## 4. Scenario design workflow
 
 0. **OOB header (mandatory):** Comment block at top — year/DB, sides, missions, force composition, objectives.
-1. Sides & posture.
-2. Infrastructure — CSG (carrier + escorts), bases; see `logic_checks_cmo.md` §4.
-3. Units — assign aircraft to bases/carriers.
-4. Missions — create then assign.
-5. Events — triggers/actions as needed.
+1. **Sides & posture (mandatory on blank scenarios):** `ScenEdit_AddSide({side='...'})` for **every** side **before** `ScenEdit_SetSidePosture`, `ScenEdit_AddMission`, or any spawn. Preflight fails with `Sides:` if a referenced side was never added (CMO: *Unable to identify Side-A!*).
+2. **Reference points:** every `ScenEdit_AddReferencePoint` needs **`side=`** matching the mission that uses the RP in `zone={...}` (duplicate name/coords per side if needed). Preflight: `Reference point:` errors.
+3. Infrastructure — CSG (carrier + escorts), bases; see `logic_checks_cmo.md` §4.
+4. Units — assign aircraft to bases/carriers.
+5. Missions — create then assign.
+6. Events — triggers/actions as needed.
 
 ## 5. Date & time tools
 

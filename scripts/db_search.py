@@ -295,6 +295,16 @@ def validate_scenario_air_loadouts(
     warnings.extend(wrap_warnings)
     ok.extend(wrap_ok)
 
+    side_errors, side_warnings, side_ok = _validate_sides_created_before_use(content)
+    errors.extend(side_errors)
+    warnings.extend(side_warnings)
+    ok.extend(side_ok)
+
+    rp_errors, rp_warnings, rp_ok = _validate_reference_points(content)
+    errors.extend(rp_errors)
+    warnings.extend(rp_warnings)
+    ok.extend(rp_ok)
+
     for aircraft_id, loadout_id in unique_pairs:
         aircraft_sv = _pick_series_version(db, "DataAircraft", aircraft_id, series, version)
         if not aircraft_sv:
@@ -409,8 +419,9 @@ def validate_scenario_air_loadouts(
 
     scenario_year = _parse_scenario_year(content)
     ships = _parse_naval_placements(content)
+    geo_units = _parse_all_geo_placements(content)
 
-    water_errors, water_warnings, water_ok = _validate_ship_sub_water_placement(ships)
+    water_errors, water_warnings, water_ok = _validate_unit_geo_placement(geo_units)
     errors.extend(water_errors)
     warnings.extend(water_warnings)
     ok.extend(water_ok)
