@@ -12,6 +12,18 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
 - **`.cursor/rules/logic_checks_cmo.md`** — Conceptual “rules of the game.” Use for scenario logic validation (fuel, sensors, doctrine, CSG, strike timing) instead of guessing from the PDF manual.
 - **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). Full API reference in the file header (lines 1–100). Generated scenarios live in `generated/` (gitignored locally).
 
+### Reference PDFs (local, gitignored)
+
+`*.pdf` (and other reference formats in `.gitignore`) may be absent in a bare clone but often exist locally under **`.cursor/rules/`** or elsewhere in the workspace.
+
+**When any local PDF is relevant** (scenario year, theater, sides, OOB, doctrine, campaign history, game manual) — **read and use it**; do not skip it because it is not tracked in git. Before designing OOB or era-specific force levels, scan the workspace for matching `*.pdf` files.
+
+- PDFs inform *what* nations fielded and approximate counts; **`db_search.py`** still picks CMO **DBIDs** and loadouts.
+- Prefer the **edition/year closest to `scenario_year`** (inventory references go stale quickly).
+- Cite the source (title + year) in the OOB header when used.
+- Some PDFs are **scanned or image-heavy** — country tables may not be text-searchable; read targeted sections or fall back to other sources and note the gap.
+- If no suitable PDF exists locally, note that in the OOB header and proceed with Markdown rules, Wikipedia, or other references.
+
 ## 2. Essential Lua API rules (CMO-specific)
 
 ### Unit creation (`ScenEdit_AddUnit`)
@@ -97,7 +109,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 ## 4. Scenario design workflow
 
-0. **OOB header (mandatory):** Comment block at top — year/DB, sides, missions, force composition, objectives.
+0. **OOB header (mandatory):** Comment block at top — year/DB, sides, missions, force composition, objectives. Cross-check force levels against **§1 Reference PDFs** when a matching local PDF exists, before locking unit counts.
 1. **Sides & posture (mandatory on blank scenarios):** `ScenEdit_AddSide({side='...'})` for **every** side **before** `ScenEdit_SetSidePosture`, `ScenEdit_AddMission`, or any spawn. Preflight fails with `Sides:` if a referenced side was never added (CMO: *Unable to identify Side-A!*).
 2. **Reference points:** every `ScenEdit_AddReferencePoint` needs **`side=`** matching the mission that uses the RP in `zone={...}` (duplicate name/coords per side if needed). Preflight: `Reference point:` errors.
 3. Infrastructure — CSG (carrier + escorts), bases; see `logic_checks_cmo.md` §4.
