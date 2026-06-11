@@ -1481,7 +1481,7 @@ function M.setup_tlam_on_air_strike(ship_unit)
     return ok
 end
 
--- CG 52 solo op aparte TLAM Strike (legacy — ME TOT vaak leeg; prefer setup_tlam_on_air_strike).
+-- CG 52 solo on separate TLAM Strike (legacy — ME TOT often empty; prefer setup_tlam_on_air_strike).
 function M.setup_solo_tlam_shooter(ship_unit)
     if not ship_unit or not ship_unit.guid then
         return false
@@ -1968,7 +1968,7 @@ function M.verify_tlam_mission_has_shooter(ship_unit)
     local side = M.state.strike_side
     local naval_mission = M.state.TLAM_STRIKE_MISSION
     if not ship_unit or not ship_unit.guid then
-        print('WARNING: TLAM salvo — geen CG-shooter geplaatst')
+        print('WARNING: TLAM salvo — no CG shooter placed')
         return false
     end
     local m = ScenEdit_GetMission(side, naval_mission)
@@ -2005,11 +2005,11 @@ end
 
 function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, mission_name, strike_escort)
     if loadoutid == nil then
-        print('ERROR: Missing LoadoutID voor ' .. unitname .. ' (DBID ' .. dbid .. ')')
+        print('ERROR: Missing LoadoutID for ' .. unitname .. ' (DBID ' .. dbid .. ')')
         return nil
     end
     if not base_guid then
-        print('ERROR: Geen basis voor ' .. unitname)
+        print('ERROR: No base for ' .. unitname)
         return nil
     end
 
@@ -2038,14 +2038,14 @@ function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, miss
     local u = ScenEdit_AddUnit(add_params)
 
     if not u or not u.guid then
-        print('ERROR: Air spawn mislukt: ' .. unitname)
+        print('ERROR: Air spawn failed: ' .. unitname)
         return nil
     end
 
     local created = ScenEdit_GetUnit({ guid = u.guid })
     if created and created.loadoutdbid ~= nil and tonumber(created.loadoutdbid) ~= tonumber(loadoutid) then
-        print('WARNING: Loadout afwijking voor ' .. unitname .. ' | preferred=' .. loadoutid ..
-            ' actief=' .. tostring(created.loadoutdbid))
+        print('WARNING: Loadout mismatch for ' .. unitname .. ' | preferred=' .. loadoutid ..
+            ' active=' .. tostring(created.loadoutdbid))
     end
 
     if mission_name then
@@ -2058,7 +2058,7 @@ function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, miss
             escort = strike_escort,
         })
         if not M.assign_air_to_mission(side, u.guid, unitname, mission_name, strike_escort) then
-            print('ERROR: AssignUnitToMission mislukt: ' .. unitname .. ' -> ' .. mission_name)
+            print('ERROR: AssignUnitToMission failed: ' .. unitname .. ' -> ' .. mission_name)
         end
     end
     return u
@@ -2098,7 +2098,7 @@ function M.place_base(side, unitname, latitude, longitude)
         altitude = 0,
     })
     if not base then
-        print('ERROR: Basis kon niet worden geplaatst: ' .. unitname)
+        print('ERROR: Could not place base: ' .. unitname)
     end
     return base
 end
@@ -2117,7 +2117,7 @@ function M.place_sam(side, unitname, dbid, latitude, longitude)
         altitude = 0,
     })
     if not sam then
-        print('ERROR: SAM kon niet worden geplaatst: ' .. unitname)
+        print('ERROR: Could not place SAM: ' .. unitname)
     end
     return sam
 end
@@ -2138,7 +2138,7 @@ function M.place_sub(side, unitname, dbid, latitude, longitude)
         altitude = -50,
     })
     if not sub then
-        print('ERROR: Onderzeeër kon niet worden geplaatst: ' .. unitname)
+        print('ERROR: Could not place submarine: ' .. unitname)
     end
     return sub
 end
@@ -2160,7 +2160,7 @@ function M.place_ship(side, unitname, dbid, latitude, longitude)
         altitude = 0,
     })
     if not ship then
-        print('ERROR: Schip kon niet worden geplaatst: ' .. unitname)
+        print('ERROR: Could not place ship: ' .. unitname)
     end
     return ship
 end
@@ -2556,7 +2556,7 @@ function M.assign_csg_group_missions(group_name, lead_unit, patrol_mission, stri
     end
     if strike_unit and strike_mission then
         if not M.assign_ship_to_mission(side, strike_unit, strike_mission, group_name) then
-            print('ERROR: TLAM shooter niet op missie: ' .. tostring(strike_unit.name or strike_unit.guid) ..
+            print('ERROR: TLAM shooter not on mission: ' .. tostring(strike_unit.name or strike_unit.guid) ..
                 ' -> ' .. tostring(strike_mission))
         end
     end
@@ -2565,7 +2565,7 @@ end
 -- CVN + CG + DDGs in one CMO group; TLAM schedule may be empty at import until Play (see INIT LOG).
 function M.form_csg_group(group_name, lead, members)
     if not lead or not lead.guid then
-        print('ERROR: CSG group zonder lead')
+        print('ERROR: CSG group without lead')
         return
     end
     ScenEdit_SetUnit({ guid = lead.guid, group = group_name, groupLead = lead.guid })

@@ -2,6 +2,8 @@
 
 Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. Use it to produce syntactically correct, tactically coherent scenarios.
 
+**Language:** All project documentation, source comments, and user-facing strings (print/log messages, generated Lua output) must be written in **English**. This includes `.cursor/rules/`, scripts, and scenario templates. Do not add Dutch or other non-English prose.
+
 **Output path:** Write scenario scripts to `generated/<scenario_name>.lua`. The folder is in git (via `.gitkeep`); `*.lua` inside it are gitignored locally.
 
 ## 1. Core sources
@@ -91,7 +93,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 - **Nil checks:** Verify `ScenEdit_AddUnit` succeeded before using `.guid`.
 - **Strike escort:** Third parameter `true` on `ScenEdit_AssignUnitToMission` for strike escort slot.
-- **Strike counts:** Tel strikers (zonder `escort=true`) en escorts op dezelfde Strike-missie; `required_escorts = ceil(strikers ÷ StrikeFlightSize) × EscortMinShooter`. Zie `logic_checks_cmo.md` §1 **Strike striker/escort counts**; preflight: `Strike escort coverage`.
+- **Strike counts:** Count strikers (without `escort=true`) and escorts on the same Strike mission; `required_escorts = ceil(strikers ÷ StrikeFlightSize) × EscortMinShooter`. See `logic_checks_cmo.md` §1 **Strike striker/escort counts**; preflight: `Strike escort coverage`.
 - **Nullable .NET errors:** For AIR on base, prefer `altitude = '0'` (string); for ships/facilities use `altitude = 0`.
 
 ### Mission management (`ScenEdit_AddMission`)

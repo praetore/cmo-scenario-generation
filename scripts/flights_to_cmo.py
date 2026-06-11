@@ -155,7 +155,7 @@ def render_lua(units, side, posture, meta):
     a("        loadoutid=loadoutid, latitude=lat, longitude=lon, altitude=alt_m, heading=hdg,")
     a("    })")
     a("    if not u or not u.guid then")
-    a("        print('ERROR: kon vluchteenheid niet plaatsen: '..unitname)")
+    a("        print('ERROR: could not place flight unit: '..unitname)")
     a("        return nil")
     a("    end")
     a("    ScenEdit_SetUnit({ guid=u.guid, heading=hdg, speed=spd })")
@@ -179,7 +179,7 @@ def render_lua(units, side, posture, meta):
             )
         )
     a("")
-    a("print('Civiel vliegverkeer geladen: %d eenheid(en) op side \\'%s\\'.')" % (len(units), _lua_str(side)))
+    a("print('Civil air traffic loaded: %d unit(s) on side \\'%s\\'.')" % (len(units), _lua_str(side)))
     return "\n".join(lines) + "\n"
 
 
