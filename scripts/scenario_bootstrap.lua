@@ -1,6 +1,6 @@
 -- scenario_bootstrap.lua — CMO scenario helpers (implementation only).
 -- Reference: .cursor/rules/scenario_bootstrap_reference.md
--- Workflow: generated/src/<name>_src.lua → embed_bootstrap.py → generated/<name>.lua
+-- Workflow: generated/src/<name>_src.lua → generate_scenario.py → generated/<name>.lua
 
 local M = {}
 
@@ -1741,7 +1741,7 @@ function M.weapon_name_is_nuclear_cruise(name)
     return false
 end
 
--- Filled by embed_bootstrap.py from DataWarhead.Type=4001 (EnumWarheadType Nuclear).
+-- Filled by generate_scenario.py from DataWarhead.Type=4001 (EnumWarheadType Nuclear).
 M.NUCLEAR_WEAPON_DBIDS = {}
 M.NUCLEAR_CRUISE_DBIDS = {}
 

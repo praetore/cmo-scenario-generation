@@ -5,11 +5,44 @@ Implementation: **`scripts/scenario_bootstrap.lua`**. Scenarios call helpers as 
 **Authoring workflow**
 
 1. Write **`generated/src/<scenario>_src.lua`** using `cmo.*` (see setup below).
-2. Preflight: `python scripts/validate_scenario.py generated/src/<scenario>_src.lua ...`
-3. Build CMO file: `python scripts/embed_bootstrap.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**
-4. Load **`generated/<scenario>.lua`** in CMO (never load `*_src.lua`).
+2. Player briefing (English, sidecar only — **not** inline in Lua): **`generated/src/<scenario>_briefing.txt`** (+ auto-synced `.html`). See **`skills_cmo.md` §10**.
+3. Preflight: `python scripts/validate_scenario.py generated/src/<scenario>_src.lua ...`
+4. Build CMO file: `python scripts/generate_scenario.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**
+5. Load **`generated/<scenario>.lua`** in CMO (never load `*_src.lua`).
 
-See also: **`skills_cmo.md` §6–§9**, **`logic_checks_cmo.md` §4**.
+### Player briefing files (`*_briefing.txt` + `*_briefing.html`)
+
+- Paths: **`generated/src/<name>_briefing.txt`** and **`.html`** (same stem as `<name>_src.lua` or standalone `<name>.lua`).
+- **English only.** One `@side` block per playable side (name must match `ScenEdit_AddSide`).
+- **Do not embed briefings in Lua source.** No `ScenEdit_SpecialMessage` player text in `*_src.lua` or standalone scenario bodies — only in these sidecar files. `generate_scenario.py` injects HTML into the CMO load file; it strips legacy inline briefing blocks from source when building the load file.
+- **Body format** (per side):
+
+```
+SCENARIO TITLE IN CAPS
+Date: DDMMYYYY | Side: Side Name | Complexity: High
+
+I. SITUATION
+...
+
+II. INTEL
+Friendly OOB: ...
+Enemy Threat: ...
+Environment: ...
+
+III. MISSION
+...
+
+IV. EXECUTION & ROE
+ROE: ...
+Special Instructions: ...
+```
+
+- Edit `.txt` (easier) or `.html` (CMO-exact). If `.txt` is newer, generate regenerates `.html`; if `.html` is newer, generate uses it as-is.
+- **Bootstrap:** `python scripts/generate_scenario.py generated/src/<name>_src.lua` (generate + briefing).
+- **Standalone load file:** `python scripts/generate_scenario.py generated/<name>.lua` (briefing inject only).
+- Skip briefings: `--no-briefing`
+
+See also: **`skills_cmo.md` §6 (logs), §10 (briefings)**, **`logic_checks_cmo.md` §4**.
 
 ---
 
@@ -120,7 +153,7 @@ Use these in scenarios — do not reimplement schedule logic ad hoc.
 | Function | Purpose |
 | :--- | :--- |
 | `configure_nuclear_policy({ allowed=false, ... })` | Side doctrine + strip policy |
-| `weapon_dbid_is_nuclear(dbid)` / `weapon_dbid_is_nuclear_cruise(dbid)` | DB sets injected at embed |
+| `weapon_dbid_is_nuclear(dbid)` / `weapon_dbid_is_nuclear_cruise(dbid)` | DB sets injected at generate time |
 | `weapon_name_is_nuclear(name)` | Fallback when dbid unknown |
 | `conventional_tlam_dbid()` / `strip_nuclear_from_unit(unit, opts?)` | After `place_ship` on CSG |
 
@@ -157,7 +190,7 @@ End scenarios with a Strike TOT summary line when applicable.
 
 - **Mission names, not guids** for `AssignUnitToMission` / `SetUnit(mission=)`.
 - **Groups:** use a name string to join; do not set `group='none'` on ships never grouped (CMO creates a group literally named `"none"`). Use `ungroup_unit()` to leave a group.
-- **No external Lua:** use `embed_bootstrap.py` (CMO has no `dofile`).
+- **No external Lua:** use `generate_scenario.py` (CMO has no `dofile`).
 - **`SetMission` on strike package after aircraft assigned** clears the package — configure options before spawn; TOT via `CreateMissionFlightPlan`.
 - **Naval TLAM:** `setup_csg_strike_on_air_strike` keeps ships in CSG; `set_naval_strike_schedule` after assign.
 - **SEAD** = Patrol type `SEAD`, not Strike; set `starttime`/`TakeOffTime` before strike TOT.

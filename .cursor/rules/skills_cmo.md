@@ -2,14 +2,23 @@
 
 Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. Use it to produce syntactically correct, tactically coherent scenarios.
 
-**Language:** All project documentation, source comments, and user-facing strings (print/log messages, generated Lua output) must be written in **English**. This includes `.cursor/rules/`, scripts, and scenario templates. Do not add Dutch or other non-English prose.
+**Language:** Use **English** for everything operators and agents read at runtime or in tooling:
+
+| English required | Author's language OK |
+| :--- | :--- |
+| `.cursor/rules/`, scripts, Python CLI output | OOB / header comments in `*_src.lua` (optional; not shown to the player) |
+| `print()` / init log lines — see **§6** | |
+| Player briefings — see **§10** | |
+| New scenario templates and docs | |
+
+Do not add Dutch or other non-English prose in logs, briefings, or tool messages.
 
 **Output path:** Bootstrap scenarios use two local files under `generated/` (all `*.lua` gitignored — only `.gitkeep` placeholders are tracked):
 
 | File | Purpose |
 | :--- | :--- |
 | `generated/src/<name>_src.lua` | **Source** — edit this; preflight here; **do not load in CMO** |
-| `generated/<name>.lua` | **CMO load file** — built by `embed_bootstrap.py` (bootstrap inlined + tree-shaked) |
+| `generated/<name>.lua` | **CMO load file** — built by `generate_scenario.py` (bootstrap inlined + tree-shaked) |
 
 Standalone scenarios (no `cmo.*` helpers) remain a single `generated/<name>.lua` loaded directly in CMO.
 
@@ -234,7 +243,7 @@ Helper messages (see `scenario_bootstrap.lua`):
 | :--- | :--- |
 | Spawn, CSG, strike/TLAM timing | **`scripts/scenario_bootstrap.lua`** — edit helpers here; scenarios call `cmo.*` |
 | Bootstrap API & recipes | **`scenario_bootstrap_reference.md`** + **`skills_cmo.md` §9** |
-| Run in CMO | **`python scripts/embed_bootstrap.py generated/src/<file>_src.lua`** → load **`generated/<file>.lua`** |
+| Run in CMO | **`python scripts/generate_scenario.py generated/src/<file>_src.lua`** → load **`generated/<file>.lua`** |
 | Preflight | `validate_scenario.py` on **`generated/src/<file>_src.lua`** (merges bootstrap Lua automatically) |
 | Raw CMO API one-liners | `cmo_api_reference.md` |
 
@@ -245,8 +254,9 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 ### Workflow
 
 1. Write `generated/src/<name>_src.lua` with `cmo.*` calls (source only — not for CMO load).
-2. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
-3. Embed: `python scripts/embed_bootstrap.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
+2. Edit or accept auto-generated player briefings — **§10** (`generated/src/<name>_briefing.txt` + `.html`).
+3. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
+4. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
 
 Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
@@ -305,3 +315,50 @@ Shared mutable state: **`cmo.state`** (`spawned_air_missions`, strike mission na
 - `CreateMissionFlightPlan`: `DATEONTARGET = 'YYYY/MM/DD'`, `TIMEONTARGET = 'HH:MM:SS'`.
 
 Details and pitfalls: **`scenario_bootstrap_reference.md`**, **`logic_checks_cmo.md`** §4.
+
+## 10. Player briefings
+
+Player-facing scenario text lives in **sidecar files**, not in the Lua source.
+
+### Files
+
+| Path | Role |
+| :--- | :--- |
+| `generated/src/<name>_briefing.txt` | Edit here (plain text, `@side` blocks) |
+| `generated/src/<name>_briefing.html` | Auto-synced from `.txt`, or edit for CMO-exact HTML |
+
+Same stem as `<name>_src.lua` (bootstrap) or standalone `generated/<name>.lua`. **English only.** One `@side` block per playable side; side name must match `ScenEdit_AddSide`.
+
+### Format (per `@side` block)
+
+```
+SCENARIO TITLE IN CAPS
+Date: DDMMYYYY | Side: Side Name | Complexity: High
+
+I. SITUATION
+...
+
+II. INTEL
+Friendly OOB: ...
+Enemy Threat: ...
+Environment: ...
+
+III. MISSION
+...
+
+IV. EXECUTION & ROE
+ROE: ...
+Special Instructions: ...
+```
+
+If `.txt` is newer, `generate_scenario.py` regenerates `.html`; if `.html` is newer, generate uses it as-is.
+
+### Inject (do not embed in source)
+
+- **`generate_scenario.py`** appends `ScenEdit_SpecialMessage(...)` HTML to the **CMO load file** only.
+- **Do not** put `ScenEdit_SpecialMessage` player briefings in `*_src.lua` or standalone scenario bodies. Legacy inline blocks are stripped on generate; keeping briefings in sidecar files avoids duplicates and language drift.
+- Bootstrap: `python scripts/generate_scenario.py generated/src/<name>_src.lua`
+- Standalone load file (briefing inject only): `python scripts/generate_scenario.py generated/<name>.lua`
+- Skip: `--no-briefing`
+
+Reference: **`scenario_bootstrap_reference.md`** (briefing section), Cuba briefing example in `generated/src/`.

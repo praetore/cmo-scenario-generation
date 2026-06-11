@@ -10,15 +10,16 @@ Run from the repository root.
 |--------|--------|
 | `db_search.py` | DB lookup — search units, `--loadouts`, `--weapons` |
 | `validate_scenario.py` | Preflight — validate scenario Lua before CMO import |
-| `embed_bootstrap.py` | Packaging — build CMO load file from `*_src.lua` (inline bootstrap + tree-shake) |
+| `generate_scenario.py` | **Generate** — build CMO load file from `*_src.lua` |
+| `generate_briefing.py` | **Generate** — briefing txt/html sync (used by `generate_scenario`) |
 
 ```bash
 python scripts/db_search.py "F-35C" --series DB3K --version 515
 python scripts/validate_scenario.py generated/src/YOUR_SCENARIO_src.lua --series DB3K --version 515
-python scripts/embed_bootstrap.py generated/src/YOUR_SCENARIO_src.lua
+python scripts/generate_scenario.py generated/src/YOUR_SCENARIO_src.lua
 ```
 
-`embed_bootstrap.py` reads `generated/src/<name>_src.lua` and writes `generated/<name>.lua` for CMO. Standalone scenarios skip embed and load `generated/<name>.lua` directly.
+`generate_scenario.py` reads `generated/src/<name>_src.lua` and writes `generated/<name>.lua` for CMO (inline bootstrap + tree-shake + player briefings). Player briefings live in **`generated/src/<name>_briefing.txt`** (English; not inline in Lua — see `.cursor/rules/skills_cmo.md` §10). Standalone load files: `python scripts/generate_scenario.py generated/<name>.lua` (briefing inject only). Use `--no-briefing` to skip briefings.
 
 `db_search.py --validate-scenario` still works but is deprecated; use `validate_scenario.py`.
 
@@ -38,17 +39,21 @@ python scripts/embed_bootstrap.py generated/src/YOUR_SCENARIO_src.lua
 | Module | Role |
 |--------|------|
 | `preflight_validate.py` | Orchestrates full scenario validation |
-| `preflight_checks.py` | Individual validators (strike, CSG, SEAD, OOB, geo, …) |
-| `preflight_parse.py` | Lua parsing helpers |
-| `preflight_constants.py` | Shared constants and patterns |
+| `preflight_parse.py` | Parse scenario Lua for units, missions, sides |
+| `preflight_checks.py` | Individual validation checks |
+| `preflight_constants.py` | Shared constants |
 | `preflight_report.py` | Error/warning report helpers |
 | `preflight_luacheck.py` | Download/run luacheck for static Lua analysis |
 
-### Packaging
+### Generate (`generate_*`)
 
 | Module | Role |
 |--------|------|
-| `embed_bootstrap.py` | Build `generated/<name>.lua` from `generated/src/<name>_src.lua` for CMO |
+| `generate_scenario.py` | CLI — build CMO load file from source |
+| `generate_constants.py` | Paths, shared regex, path helpers |
+| `generate_source.py` | Source/load text transforms, headers, strip inlined blocks |
+| `generate_inline.py` | Inline `scenario_bootstrap.lua` + tree-shake |
+| `generate_briefing.py` | Sync `*_briefing.txt` + `.html`, inject `ScenEdit_SpecialMessage` |
 | `scenario_bootstrap.lua` | Shared CMO Lua helpers (implementation) |
 | `.cursor/rules/scenario_bootstrap_reference.md` | Bootstrap API, recipes, pitfalls (authors/agents) |
 
@@ -66,7 +71,6 @@ Set a FlightAware AeroAPI key in `cmo_config.ini` under `[aeroapi] api_key` or `
 Full reference: `.cursor/rules/aeroapi_reference.md`.
 
 ```bash
-python scripts/traffic_aeroapi.py key-status
-python scripts/traffic_flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3" --max-flights 40
-python scripts/traffic_flights_to_cmo.py --name nl_traffic --from-json sample.json
+python scripts/traffic_aeroapi.py flights --origin EHAM
+python scripts/traffic_flights_to_cmo.py --origin EHAM --limit 20
 ```

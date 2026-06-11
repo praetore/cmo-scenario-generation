@@ -33,12 +33,13 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 
 1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
 2. Save Lua under `generated/` on your machine (not in this git repo).
-   - Bootstrap scenarios: edit `generated/src/<name>_src.lua`; load `generated/<name>.lua` in CMO.
-   - Standalone scripts: single `generated/<name>.lua` (no `_src`, no embed).
+   - Bootstrap scenarios: edit `generated/src/<name>_src.lua` and **`generated/src/<name>_briefing.txt`** (English player briefings — see `skills_cmo.md` §10; do not embed inline `ScenEdit_SpecialMessage` in source).
+   - Load `generated/<name>.lua` in CMO (built by generate step below).
+   - Standalone scripts: single `generated/<name>.lua` (no `_src`; briefing sidecar optional).
 3. Run **`scripts/validate_scenario.py …`** on the **source** file (`generated/src/*_src.lua` when using bootstrap).
 4. **CMO import** (bootstrap scenarios only):
    ```bash
-   python scripts/embed_bootstrap.py generated/src/YOUR_SCENARIO_src.lua
+   python scripts/generate_scenario.py generated/src/YOUR_SCENARIO_src.lua
    ```
    Load **`generated/YOUR_SCENARIO.lua`** in the scenario editor (never load `generated/src/*_src.lua`).
 5. Copy the scenario `.lua` into CMO’s `Lua` folder if needed and execute from the editor.
@@ -65,7 +66,11 @@ cmo-scenario-generation/
 ├── scripts/                  ← Python (run from repo root)
 │   ├── db_search.py             ← DB lookup CLI
 │   ├── validate_scenario.py     ← preflight CLI
-│   ├── embed_bootstrap.py       ← CMO import packaging
+│   ├── generate_scenario.py     ← CMO load file generation (CLI)
+│   ├── generate_briefing.py     ← player briefing sync/inject
+│   ├── generate_constants.py    ← paths + shared regex
+│   ├── generate_source.py       ← source/load text transforms
+│   ├── generate_inline.py       ← bootstrap inline + tree-shake
 │   ├── scenario_bootstrap.lua   ← shared Lua helpers (versioned)
 │   └── preflight_*.py, db_*.py, traffic_*.py, cmo_*.py
 ├── DB/                       ← optional local .db3 copy (gitignored)
@@ -177,19 +182,21 @@ Preflight and search use the **version-locked source `.db3`** for your scenario 
 ## Running a scenario in CMO (step-by-step)
 
 1. **Install CMO** and configure database paths (see above).
-2. **Write** a `.lua` scenario under `generated/` locally (player briefing can be embedded inline via `ScenEdit_SpecialMessage` in the script).
+2. **Write** scenario source locally: `generated/src/<name>_src.lua` (bootstrap) or `generated/<name>.lua` (standalone). Player briefings go in **`generated/src/<name>_briefing.txt`** — `generate_scenario.py` injects them; do not embed inline `ScenEdit_SpecialMessage` in the Lua source.
 3. **Validate** with `scripts/validate_scenario.py` (above).
-4. **Copy** the script into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
-5. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.
-6. Watch the in-game message log for `print()` output and errors.
-7. **Save** as `.scen` if you want to reuse without re-running the script.
+4. **Generate** (bootstrap): `python scripts/generate_scenario.py generated/src/<name>_src.lua`
+5. **Copy** the load file (`generated/<name>.lua`) into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
+6. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.
+7. Watch the in-game message log for `print()` output and errors (English prefixes — `skills_cmo.md` §6).
+8. **Save** as `.scen` if you want to reuse without re-running the script.
 
 ---
 
 ## Contributing / AI-assisted authoring
 
-- Write new scenarios to **`generated/<name>.lua`** locally (folder is gitignored).
-- Follow **`.cursor/rules/skills_cmo.md`** and **`.cursor/rules/logic_checks_cmo.md`**.
+- Bootstrap scenarios: edit **`generated/src/<name>_src.lua`** + **`generated/src/<name>_briefing.txt`**; run **`generate_scenario.py`** before loading in CMO.
+- Standalone scenarios: single **`generated/<name>.lua`** (briefing sidecar optional).
+- Follow **`.cursor/rules/skills_cmo.md`** (English logs §6, briefings §10) and **`.cursor/rules/logic_checks_cmo.md`**.
 - API reference: **`.cursor/rules/cmo_api_reference.md`**.
 
 Run preflight before sharing scripts with others (zip, gist, or your own fork).
