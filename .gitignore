@@ -2,8 +2,8 @@
 cmo_master.db
 cmo_config.ini
 
-# Source .db3 and description trees (use cmo_config.ini or copy here locally)
-DB/
+# Source .db3 files in DB/ (README stays tracked; use cmo_config.ini or copy .db3 here locally)
+DB/*
 !DB/README.md
 
 # Scenario Lua output (local only — not published in this repository)
