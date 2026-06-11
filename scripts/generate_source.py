@@ -83,6 +83,62 @@ def _split_scenario_for_embed(text: str) -> tuple[str, str]:
     return preamble_text, "".join(lines[i:])
 
 
+def _unwrap_block_comments(text: str) -> str:
+    """Convert --[[ ... ]] blocks to line comments (WARNO-style header)."""
+
+    def repl(match: re.Match[str]) -> str:
+        lines: list[str] = []
+        for raw in match.group(1).splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                lines.append("--")
+                continue
+            if stripped.startswith("--"):
+                lines.append(stripped)
+            else:
+                lines.append("-- " + stripped)
+        return "\n".join(lines) + "\n"
+
+    return re.sub(r"--\[\[(.*?)\]\]", repl, text, flags=re.DOTALL)
+
+
+def _is_load_header_noise(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("--"):
+        return False
+    if AUTHORING_COMMENT.match(stripped) or TOOLING_IN_COMMENT.match(stripped):
+        return True
+    if re.match(
+        r"^--\s*(?:Source:|Bootstrap:|Preflight:|\s*\(DB IDs/)",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def prepare_load_header_and_annotations(preamble: str) -> tuple[str, str]:
+    """Player-facing load-file header (OOB only) + preflight @ annotations before scenario code."""
+    text = _unwrap_block_comments(preamble)
+    header_lines: list[str] = []
+    ann_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if re.match(r"^--\s*@", stripped):
+            ann_lines.append(line)
+            continue
+        if _is_load_header_noise(stripped):
+            continue
+        header_lines.append(line)
+    header = "".join(header_lines).rstrip()
+    if header:
+        header += "\n\n"
+    annotations = "".join(ann_lines)
+    if annotations and not annotations.endswith("\n\n"):
+        annotations = annotations.rstrip() + "\n\n"
+    return header, annotations
+
+
 def _bootstrap_signature_index(text: str) -> int | None:
     m = re.search(
         r"^(-- \[inlined scenario_bootstrap|^function M\.|^local M = \{\})",
@@ -173,7 +229,7 @@ def _strip_incomplete_inlined(text: str) -> str:
             return text
         tail = text[marker.start() :]
         if re.match(
-            r"^-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n.*?^cmo\s*=\s*M\s*\n",
+            r"^(?:-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n)?local M\s*=\s*\{.*?^cmo\s*=\s*M\s*\n",
             tail,
             re.MULTILINE | re.DOTALL,
         ):
@@ -186,7 +242,7 @@ def _strip_incomplete_inlined(text: str) -> str:
 
 
 def _strip_orphan_bootstrap(text: str) -> str:
-    if INLINED_MARKER.search(text):
+    if INLINED_MARKER.search(text) or re.search(r"^local M\s*=\s*\{", text, re.MULTILINE):
         return text
     if not re.search(r"^function M\.", text, re.MULTILINE):
         return text

@@ -33,7 +33,7 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 
 1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
 2. Save Lua under `generated/` on your machine (not in this git repo).
-   - Bootstrap scenarios: edit `generated/src/<name>_src.lua` and **`generated/src/<name>_briefing.txt`** (English player briefings — see `skills_cmo.md` §10; do not embed inline `ScenEdit_SpecialMessage` in source).
+   - Bootstrap scenarios: edit `generated/src/<name>_src.lua` and **`generated/src/<name>_briefing.txt`**. **All generated scenario material is English** — OOB headers, briefings, and init logs (`skills_cmo.md` language section + §10). Do not embed inline `ScenEdit_SpecialMessage` in source.
    - Load `generated/<name>.lua` in CMO (built by generate step below).
    - Standalone scripts: single `generated/<name>.lua` (no `_src`; briefing sidecar optional).
 3. Run **`scripts/validate_scenario.py …`** on the **source** file (`generated/src/*_src.lua` when using bootstrap).

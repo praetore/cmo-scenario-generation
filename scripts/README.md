@@ -19,7 +19,9 @@ python scripts/validate_scenario.py generated/src/YOUR_SCENARIO_src.lua --series
 python scripts/generate_scenario.py generated/src/YOUR_SCENARIO_src.lua
 ```
 
-`generate_scenario.py` reads `generated/src/<name>_src.lua` and writes `generated/<name>.lua` for CMO (inline bootstrap + tree-shake + player briefings). **Runs preflight first** — aborts without writing the load file when preflight reports errors. Player briefings live in **`generated/src/<name>_briefing.txt`** (English; not inline in Lua — see `.cursor/rules/skills_cmo.md` §10). Standalone load files: `python scripts/generate_scenario.py generated/<name>.lua` (briefing inject only). Use `--no-briefing` to skip briefings.
+`generate_scenario.py` reads `generated/src/<name>_src.lua` and writes `generated/<name>.lua` for CMO: **English WARNO-style OOB header**, inlined bootstrap, `@` annotations above scenario code, tree-shake, **English player briefings**. **Runs preflight first** — aborts without writing when preflight errors remain. Briefings: **`generated/src/<name>_briefing.txt`** (English only). Standalone: `python scripts/generate_scenario.py generated/<name>.lua` (briefing inject only). `--no-briefing` to skip briefings.
+
+All generated scenario material under `generated/` — headers, briefings, and player-visible comments — must be **English**. See `.cursor/rules/skills_cmo.md` language section.
 
 `db_search.py --validate-scenario` still works but is deprecated; use `validate_scenario.py`.
 

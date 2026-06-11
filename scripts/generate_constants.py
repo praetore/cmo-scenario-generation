@@ -25,7 +25,7 @@ DOFILE_LOADER = re.compile(
 )
 
 SINGLE_INLINED = re.compile(
-    r"-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n.*?^cmo\s*=\s*M\s*\n",
+    r"(?:-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n)?.*?^local M\s*=\s*\{.*?^cmo\s*=\s*M\s*\n",
     re.MULTILINE | re.DOTALL,
 )
 

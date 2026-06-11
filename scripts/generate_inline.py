@@ -70,21 +70,34 @@ def _top_level_kind(line: str) -> str | None:
     return None
 
 
+_BOOTSTRAP_BLOCK_RE = re.compile(
+    r"^local M\s*=\s*\{.*?^cmo\s*=\s*M\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+
+
 def _split_embedded(merged_text: str):
     marker = INLINED_MARKER.search(merged_text)
-    if not marker:
-        return None
-    block_m = re.search(
-        r"^-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n.*?^cmo\s*=\s*M\s*$",
-        merged_text[marker.start() :],
-        re.MULTILINE | re.DOTALL,
-    )
+    if marker:
+        block_m = re.search(
+            r"^-- \[inlined scenario_bootstrap\.lua[^\n]*\]\n.*?^cmo\s*=\s*M\s*$",
+            merged_text[marker.start() :],
+            re.MULTILINE | re.DOTALL,
+        )
+        if not block_m:
+            return None
+        boot_end = marker.start() + block_m.end()
+        if boot_end < len(merged_text) and merged_text[boot_end] == "\n":
+            boot_end += 1
+        return merged_text[: marker.start()], merged_text[marker.start() : boot_end], merged_text[boot_end:]
+
+    block_m = _BOOTSTRAP_BLOCK_RE.search(merged_text)
     if not block_m:
         return None
-    boot_end = marker.start() + block_m.end()
+    boot_end = block_m.end()
     if boot_end < len(merged_text) and merged_text[boot_end] == "\n":
         boot_end += 1
-    return merged_text[: marker.start()], merged_text[marker.start() : boot_end], merged_text[boot_end:]
+    return merged_text[: block_m.start()], merged_text[block_m.start() : boot_end], merged_text[boot_end:]
 
 
 def _collect_entry_points(scenario_after: str) -> set[str]:
@@ -130,11 +143,13 @@ def _needed_constants(needed_functions: set[str], functions: dict[str, str]) -> 
 
 
 def _parse_bootstrap_segments(bootstrap_block: str) -> tuple[str, str, list[dict]]:
+    marker = ""
+    body = bootstrap_block
     marker_m = INLINED_MARKER.match(bootstrap_block)
-    if not marker_m:
-        raise ValueError("bootstrap block missing inlined marker")
-    marker = marker_m.group(0)
-    lines = bootstrap_block[marker_m.end() :].splitlines(keepends=True)
+    if marker_m:
+        marker = marker_m.group(0)
+        body = bootstrap_block[marker_m.end() :]
+    lines = body.splitlines(keepends=True)
 
     segments: list[dict] = []
     preamble: list[str] = []
@@ -245,7 +260,9 @@ def tree_shake_bootstrap(merged_text: str) -> tuple[str, dict]:
         if seg["type"] == "alias" and seg["target"] in needed_functions
     }
 
-    parts = [marker, head]
+    parts = [head]
+    if marker:
+        parts.insert(0, marker)
     for seg in segments:
         if seg["type"] == "function":
             if seg["name"] in needed_functions:

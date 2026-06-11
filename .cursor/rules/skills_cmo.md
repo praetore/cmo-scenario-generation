@@ -2,16 +2,19 @@
 
 Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. Use it to produce syntactically correct, tactically coherent scenarios.
 
-**Language:** Use **English** for everything operators and agents read at runtime or in tooling:
+**Language — all generated output is English.** Agents and tooling must produce **English only** for anything that ends up in `generated/` or that a player/operator reads in CMO. Do not write Dutch or other non-English prose in generated material — even when the scenario theater is the Netherlands, Norway, or another non-English country.
 
-| English required | Author's language OK |
+| English required (no exceptions) | Notes |
 | :--- | :--- |
-| `.cursor/rules/`, scripts, Python CLI output | OOB / header comments in `*_src.lua` (optional; not shown to the player) |
-| `print()` / init log lines — see **§6** | |
-| Player briefings — see **§10** | |
-| New scenario templates and docs | |
+| OOB / load-file header comments | Player-visible at top of `generated/<name>.lua` — **§4 Load file header** |
+| Player briefings (`*_briefing.txt`, `*_briefing.html`) | **§10** — injected into load file via `ScenEdit_SpecialMessage` |
+| `print()` / init log lines in scenario Lua | **§6** |
+| New scenario templates and docs under `.cursor/rules/` | |
+| `.cursor/rules/`, scripts, Python CLI output | |
 
-Do not add Dutch or other non-English prose in logs, briefings, or tool messages.
+**CMO side names** (e.g. `België`, `Nederland`) may match in-game `ScenEdit_AddSide` identifiers — that is not player prose. All descriptive text around them (headers, briefings, logs) stays **English**.
+
+**Source-only tooling** lines at the top of `*_src.lua` (`SOURCE`, `Preflight`, `CMO load`, `Bootstrap`) are for agents; keep them English too for consistency.
 
 **Output path:** Bootstrap scenarios use two local files under `generated/` (all `*.lua` gitignored — only `.gitkeep` placeholders are tracked):
 
@@ -134,7 +137,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 ## 4. Scenario design workflow
 
-0. **OOB header (mandatory):** Comment block at top — historical date, year/DB, sides, missions, force composition, objectives. Cross-check force levels against **§1 Reference PDFs** when a matching local PDF exists, before locking unit counts.
+0. **OOB header (mandatory):** Comment block at top — historical date, year/DB, sides, missions, force composition, objectives. Cross-check force levels against **§1 Reference PDFs** when a matching local PDF exists, before locking unit counts. Format and load-file layout: **Load file header** below.
 1. **Scenario date (mandatory):** One canonical `local scenario_date = 'YYYY/MM/DD'` for the historical in-game day. Derive `scenario_year`, `strike_package_date`, `ScenEdit_SetTime` StartDate/date, and `@strike_package date=` from it. Preflight: **`Scenario date:`** errors on mismatch.
 2. **Sides & posture (mandatory on blank scenarios):** `ScenEdit_AddSide({side='...'})` for **every** side **before** `ScenEdit_SetSidePosture`, `ScenEdit_AddMission`, or any spawn. Preflight fails with `Sides:` if a referenced side was never added (CMO: *Unable to identify Side-A!*).
 3. **Reference points:** every `ScenEdit_AddReferencePoint` needs **`side=`** matching the mission that uses the RP in `zone={...}` (duplicate name/coords per side if needed). Preflight: `Reference point:` errors.
@@ -142,6 +145,62 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 5. Units — assign aircraft to bases/carriers.
 6. Missions — create then assign.
 7. Events — triggers/actions as needed.
+
+### Load file header (`*_src.lua` → CMO load file)
+
+Bootstrap scenarios: edit **`generated/src/<name>_src.lua`**, generate with **`python scripts/generate_scenario.py`**, load **`generated/<name>.lua`**. The OOB comment block at the top of the source becomes the **player-visible header** in the load file (WARNO-style `--` line comments). Implementation: `prepare_load_header_and_annotations()` in **`scripts/generate_source.py`**.
+
+**Write in `_src.lua` (top → bottom):**
+
+1. **Source-only tooling** (keep for agents; **stripped** from the load-file header): `-- SOURCE — do not load`, `-- Preflight: python scripts/validate_scenario.py …`, `-- CMO load: …`, `-- Bootstrap: scripts/scenario_bootstrap.lua …`
+2. **OOB header** (player-facing): title, theater, `-- OOB (Order of Battle)`, year/DB, posture, force lists per side, missions, doctrine, objectives. **English only** — copied verbatim to the load file top (see top-of-file language rule).
+3. **`-- @…` annotations** (preflight / policy — not in the visible header)
+4. **Scenario Lua** (`local scenario_date`, `cmo.*`, `ScenEdit_*`, …)
+
+Prefer **`--` line comments** for the OOB block (like **`generated/warno_air_strike.lua`**). Block comments `--[[ … ]]` are OK in source — generate unwraps them to line comments.
+
+**Generated load file layout:**
+
+```text
+-- CMO Scenario: …
+-- OOB (Order of Battle)
+-- …
+
+local M = {}
+… tree-shaken bootstrap …
+cmo = M
+
+-- @scenario_policy …
+-- @strike_package …
+
+local scenario_date = '…'
+…
+```
+
+Do **not** expect `Source:` / `Bootstrap:` / `Preflight:` / `@` lines at the top of the load file — generate removes tooling from the header and places `@` lines **after** the bootstrap block, **before** scenario code. Standalone scenarios (no bootstrap) keep one file; preflight/tooling lines may remain at the bottom of the header (WARNO pattern).
+
+**Minimal OOB skeleton in `_src.lua`:**
+
+```lua
+-- SOURCE — do not load this file in CMO. Edit <name>_src.lua in generated/src/ only.
+-- Preflight: python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515
+-- CMO load:  generated/<name>.lua (python scripts/generate_scenario.py generated/src/<name>_src.lua)
+-- CMO Scenario: <title>
+-- <theater / sides one-liner>
+--
+-- OOB (Order of Battle)
+-- Year/DB: YYYY | DB3K v515
+-- Posture: SideA <-> SideB = Hostile
+--
+-- SideA (role)
+-- Forces, missions, doctrine …
+--
+-- SideB (role)
+-- …
+
+-- @scenario_policy nuclear=false
+local scenario_date = 'YYYY/MM/DD'
+```
 
 ## 5. Date & time tools
 
@@ -253,7 +312,7 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 
 ### Workflow
 
-1. Write `generated/src/<name>_src.lua` with `cmo.*` calls (source only — not for CMO load).
+1. Write `generated/src/<name>_src.lua` with WARNO-style OOB header + `cmo.*` calls (source only — not for CMO load). Header layout: **§4 Load file header**.
 2. Edit or accept auto-generated player briefings — **§10** (`generated/src/<name>_briefing.txt` + `.html`).
 3. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
 4. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
@@ -320,7 +379,7 @@ Details and pitfalls: **`scenario_bootstrap_reference.md`**, **`logic_checks_cmo
 
 ## 10. Player briefings
 
-Player-facing scenario text lives in **sidecar files**, not in the Lua source.
+Player-facing scenario text lives in **sidecar files**, not in the Lua source. **English only** — same rule as OOB headers and init logs; never generate Dutch or other non-English briefings.
 
 ### Files
 
@@ -329,7 +388,7 @@ Player-facing scenario text lives in **sidecar files**, not in the Lua source.
 | `generated/src/<name>_briefing.txt` | Edit here (plain text, `@side` blocks) |
 | `generated/src/<name>_briefing.html` | Auto-synced from `.txt`, or edit for CMO-exact HTML |
 
-Same stem as `<name>_src.lua` (bootstrap) or standalone `generated/<name>.lua`. **English only.** One `@side` block per playable side; side name must match `ScenEdit_AddSide`.
+Same stem as `<name>_src.lua` (bootstrap) or standalone `generated/<name>.lua`. **English only** — no Dutch or other non-English player text. One `@side` block per playable side; side name must match `ScenEdit_AddSide` (side names may use diacritics when they match CMO, e.g. `België`).
 
 ### Format (per `@side` block)
 

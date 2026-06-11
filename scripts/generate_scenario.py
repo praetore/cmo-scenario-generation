@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from generate_constants import (
@@ -34,6 +33,7 @@ from generate_inline import (
 from generate_source import (
     _split_scenario_for_embed,
     apply_source_header,
+    prepare_load_header_and_annotations,
     prepare_scenario_source,
 )
 
@@ -59,16 +59,9 @@ def generate_scenario(
         )
 
     bootstrap = bootstrap_lua_for_inline(series, version)
-    built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    src_rel = repo_relative(src_path) if src_path else "generated/src/<name>_src.lua"
-    marker = (
-        f"-- [inlined scenario_bootstrap.lua @ {built_at} UTC — "
-        "edit scripts/scenario_bootstrap.lua; "
-        f"source: {src_rel}; "
-        f"re-run: python scripts/generate_scenario.py {src_rel}]\n"
-    )
-    block = marker + bootstrap + "\n"
-    merged = block + preamble + scenario_code
+    block = bootstrap + "\n"
+    load_header, annotations = prepare_load_header_and_annotations(preamble)
+    merged = load_header + block + annotations + scenario_code
     shake_stats = {
         "skipped": True,
         "reason": "tree-shake disabled",
@@ -310,7 +303,11 @@ def _cmd_extract_source(embedded_path: Path) -> int:
     ensure_source_dir()
     src_path = source_scenario_path(embedded_path.resolve())
     text = embedded_path.read_text(encoding="utf-8", errors="ignore")
-    if INLINED_MARKER.search(text) is None and "cmo." not in text:
+    if (
+        INLINED_MARKER.search(text) is None
+        and not re.search(r"^local M\s*=\s*\{", text, re.MULTILINE)
+        and "cmo." not in text
+    ):
         print(
             f"WARNING: {embedded_path.name} does not look embedded; copying as source anyway.",
             file=sys.stderr,
