@@ -173,7 +173,7 @@ During Lua import, CMO shows `print()` output in the **Message Log**. Use prefix
 
 | Prefix | When to use |
 | :--- | :--- |
-| **`ERROR:`** | Hard failure — spawn/assign failed, unit not on required mission, missing mission/targets. Script may still finish loading; user must fix before Play. |
+| **`ERROR:`** | Hard failure — spawn/assign failed, unit not on required mission, missing mission/targets. **Aborts scenario init** via `error()` (bootstrap helpers call `cmo.scenario_error` / `_abort_scenario_generation`). Fix before Play or re-run generate. |
 | **`WARNING:`** | Suspicious but not proven broken — e.g. schedule empty **without** a known Play-deferred workaround, partial assign counts, updateWPtimes failed. |
 | **`NOTE:`** | Expected CMO behaviour that **looks** wrong at init — explain what happens next (usually **after Play**). Not a failure. |
 | **`OK:`** | Verified success, **or** success with a documented deferral (e.g. TLAM schedule empty until Play but event + shooter OK). |
@@ -258,6 +258,8 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 3. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
 4. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
 
+`generate_scenario.py` **re-runs preflight** on the source; if any preflight error is reported it **does not write** the load file (exit code 2).
+
 Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
 ### Scenario skeleton
@@ -291,7 +293,7 @@ local spawn_air_wing = cmo.spawn_air_wing
 
 | Category | Functions |
 | :--- | :--- |
-| Setup | `configure_strike_timing`, `strike_schedule_datetimes`, `set_naval_strike_schedule`, `assert_db_series`, `mission_schedule_date`, `mission_schedule_datetime` |
+| Setup | `configure_strike_timing`, `strike_schedule_datetimes`, `set_naval_strike_schedule`, `assert_db_series`, `scenario_error`, `mission_schedule_date`, `mission_schedule_datetime` |
 | Spawn | `place_base`, `place_ship`, `place_sub`, `place_sam`, `add_air_unit_checked`, `spawn_air_wing` |
 | Assign | `assign_air_to_mission`, `assign_ship_to_mission`, `refresh_spawned_air_assignments`, `restore_all_spawned_air_assignments`, `resolve_mission_guid` |
 | Strike timing | `set_naval_strike_schedule`, `finalize_strike_air_after_flight_plan`, `verify_spawned_air_assignments`, `add_strike_assign_restore_event` |

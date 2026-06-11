@@ -82,6 +82,31 @@ def generate_scenario(
     return merged, shake_stats
 
 
+def _preflight_gate(source_path: Path, series: str, version: str) -> int:
+    """Run preflight on source; return 0 if ok, 2 if errors (do not write load file)."""
+    from preflight_validate import validate_scenario_air_loadouts
+
+    report = validate_scenario_air_loadouts(
+        str(source_path),
+        series=series,
+        version=version,
+    )
+    for line in report.get("ok", []):
+        print(line)
+    for line in report.get("warnings", []):
+        print(f"WARNING: {line}", file=sys.stderr)
+    for line in report.get("errors", []):
+        print(f"ERROR: {line}", file=sys.stderr)
+    if report["errors"]:
+        print(
+            f"Generate aborted — fix {len(report['errors'])} preflight error(s) in "
+            f"{repo_relative(source_path)}.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=(
@@ -221,6 +246,8 @@ def main(argv=None):
         return 1
 
     series, version = parse_db_series_version(scenario_text, args.series, args.version)
+    if _preflight_gate(input_path, series, version) != 0:
+        return 2
     merged, shake_stats = generate_scenario(
         scenario_text,
         series,
@@ -364,6 +391,8 @@ def _main_generate_only(argv: list[str]) -> int:
             version = argv[i + 1]
     tree_shake = "--no-shake" not in argv
     inject_briefing = "--no-briefing" not in argv
+    if _preflight_gate(input_path, series, version) != 0:
+        return 2
     merged, shake_stats = generate_scenario(
         scenario_text,
         series,

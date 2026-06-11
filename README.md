@@ -184,7 +184,7 @@ Preflight and search use the **version-locked source `.db3`** for your scenario 
 1. **Install CMO** and configure database paths (see above).
 2. **Write** scenario source locally: `generated/src/<name>_src.lua` (bootstrap) or `generated/<name>.lua` (standalone). Player briefings go in **`generated/src/<name>_briefing.txt`** — `generate_scenario.py` injects them; do not embed inline `ScenEdit_SpecialMessage` in the Lua source.
 3. **Validate** with `scripts/validate_scenario.py` (above).
-4. **Generate** (bootstrap): `python scripts/generate_scenario.py generated/src/<name>_src.lua`
+4. **Generate** (bootstrap): `python scripts/generate_scenario.py generated/src/<name>_src.lua` — also runs preflight; **does not write** the load file if preflight errors remain.
 5. **Copy** the load file (`generated/<name>.lua`) into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
 6. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.
 7. Watch the in-game message log for `print()` output and errors (English prefixes — `skills_cmo.md` §6).

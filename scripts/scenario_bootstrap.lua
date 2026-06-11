@@ -91,8 +91,7 @@ end
 function M.scenario_set_start(date_slash, time_hms)
     local y, m, d = date_slash:match('^(%d+)/(%d+)/(%d+)$')
     if not y then
-        print('ERROR: scenario_set_start — bad date ' .. tostring(date_slash) .. ' (want YYYY/MM/DD)')
-        return
+        M._abort_scenario_generation('scenario_set_start — bad date ' .. tostring(date_slash) .. ' (want YYYY/MM/DD)')
     end
     ScenEdit_SetTime({
         dateformat = 'YYYYMMDD',
@@ -640,6 +639,11 @@ function M._abort_scenario_generation(reason)
     error(reason, 0)
 end
 
+-- Public alias: any bootstrap ERROR aborts scenario init (no partial OOB).
+function M.scenario_error(reason)
+    M._abort_scenario_generation(reason)
+end
+
 -- Post-assignment check via ScenEdit_GetMission (Mission wrapper fields).
 -- expected: { tot_hms|tos_hms, starttime_hms|launch_dt, takeoff_hms|takeoff_dt }
 -- Default: fatal — mismatch aborts scenario Lua init via error().
@@ -1125,18 +1129,15 @@ end
 -- Function name is historical (STRIKE_AIR_MISSION); concept = strike asset unification, not "CSG joins air strike".
 function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
     if not group_name or group_name == '' then
-        print('ERROR: setup_csg_strike_on_air_strike — group_name required')
-        return false
+        M._abort_scenario_generation('setup_csg_strike_on_air_strike — group_name required')
     end
     if not strike_ships or #strike_ships == 0 then
-        print('ERROR: setup_csg_strike_on_air_strike — no strike ships')
-        return false
+        M._abort_scenario_generation('setup_csg_strike_on_air_strike — no strike ships')
     end
     local side = M.state.strike_side or 'United States'
     local strike_mission = M.state.STRIKE_AIR_MISSION
     if not strike_mission then
-        print('ERROR: setup_csg_strike_on_air_strike — STRIKE_AIR_MISSION not configured')
-        return false
+        M._abort_scenario_generation('setup_csg_strike_on_air_strike — STRIKE_AIR_MISSION not configured')
     end
     M.configure_naval_strike_doctrine(side)
     local sched = M.strike_schedule_datetimes()
@@ -1151,7 +1152,7 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
                 M.add_strike_ship_weapon_policy_event(ship_unit)
             else
                 fail_count = fail_count + 1
-                print('ERROR: strike package naval assign failed: ' .. tostring(ship_unit.name))
+                M._abort_scenario_generation('strike package naval assign failed: ' .. tostring(ship_unit.name))
             end
         end
     end
@@ -1522,12 +1523,10 @@ end
 
 function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, mission_name, strike_escort)
     if loadoutid == nil then
-        print('ERROR: Missing LoadoutID for ' .. unitname .. ' (DBID ' .. dbid .. ')')
-        return nil
+        M._abort_scenario_generation('Missing LoadoutID for ' .. unitname .. ' (DBID ' .. dbid .. ')')
     end
     if not base_guid then
-        print('ERROR: No base for ' .. unitname)
-        return nil
+        M._abort_scenario_generation('No base for ' .. unitname)
     end
 
     local host = ScenEdit_GetUnit({ guid = base_guid })
@@ -1555,8 +1554,7 @@ function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, miss
     local u = ScenEdit_AddUnit(add_params)
 
     if not u or not u.guid then
-        print('ERROR: Air spawn failed: ' .. unitname)
-        return nil
+        M._abort_scenario_generation('Air spawn failed: ' .. unitname)
     end
 
     local created = ScenEdit_GetUnit({ guid = u.guid })
@@ -1575,7 +1573,7 @@ function M.add_air_unit_checked(side, unitname, dbid, base_guid, loadoutid, miss
             escort = strike_escort,
         })
         if not M.assign_air_to_mission(side, u.guid, unitname, mission_name, strike_escort) then
-            print('ERROR: AssignUnitToMission failed: ' .. unitname .. ' -> ' .. mission_name)
+            M._abort_scenario_generation('AssignUnitToMission failed: ' .. unitname .. ' -> ' .. mission_name)
         end
     end
     return u
@@ -1594,9 +1592,8 @@ function M._require_land_placement(unitname, latitude, longitude)
         return true
     end
     if elev <= 0 then
-        print('ERROR: Facility placement underwater at ' .. unitname .. ' at ' .. latitude .. ',' .. longitude ..
+        M._abort_scenario_generation('Facility placement underwater at ' .. unitname .. ' at ' .. latitude .. ',' .. longitude ..
             ' (elevation=' .. tostring(elev) .. 'm)')
-        return false
     end
     return true
 end
@@ -1615,7 +1612,7 @@ function M.place_base(side, unitname, latitude, longitude)
         altitude = 0,
     })
     if not base then
-        print('ERROR: Could not place base: ' .. unitname)
+        M._abort_scenario_generation('Could not place base: ' .. unitname)
     end
     return base
 end
@@ -1634,7 +1631,7 @@ function M.place_sam(side, unitname, dbid, latitude, longitude)
         altitude = 0,
     })
     if not sam then
-        print('ERROR: Could not place SAM: ' .. unitname)
+        M._abort_scenario_generation('Could not place SAM: ' .. unitname)
     end
     return sam
 end
@@ -1642,8 +1639,7 @@ end
 function M.place_sub(side, unitname, dbid, latitude, longitude)
     local elev = World_GetElevation({ latitude = latitude, longitude = longitude })
     if elev and elev > 0 then
-        print('ERROR: Submarine placement over land: ' .. unitname .. ' at ' .. latitude .. ',' .. longitude)
-        return nil
+        M._abort_scenario_generation('Submarine placement over land: ' .. unitname .. ' at ' .. latitude .. ',' .. longitude)
     end
     local sub = ScenEdit_AddUnit({
         type = 'Sub',
@@ -1655,7 +1651,7 @@ function M.place_sub(side, unitname, dbid, latitude, longitude)
         altitude = -50,
     })
     if not sub then
-        print('ERROR: Could not place submarine: ' .. unitname)
+        M._abort_scenario_generation('Could not place submarine: ' .. unitname)
     end
     return sub
 end
@@ -1663,9 +1659,8 @@ end
 function M.place_ship(side, unitname, dbid, latitude, longitude)
     local elev = World_GetElevation({ latitude = latitude, longitude = longitude })
     if elev and elev > 0 then
-        print('ERROR: Cannot place ship over land: ' .. unitname .. ' at ' .. latitude .. ',' .. longitude ..
+        M._abort_scenario_generation('Cannot place ship over land: ' .. unitname .. ' at ' .. latitude .. ',' .. longitude ..
             ' (elevation=' .. tostring(elev) .. 'm)')
-        return nil
     end
     local ship = ScenEdit_AddUnit({
         type = 'Ship',
@@ -1677,7 +1672,7 @@ function M.place_ship(side, unitname, dbid, latitude, longitude)
         altitude = 0,
     })
     if not ship then
-        print('ERROR: Could not place ship: ' .. unitname)
+        M._abort_scenario_generation('Could not place ship: ' .. unitname)
     end
     return ship
 end
@@ -2067,8 +2062,7 @@ end
 -- CVN + CG + DDGs in one CMO group.
 function M.form_csg_group(group_name, lead, members)
     if not lead or not lead.guid then
-        print('ERROR: CSG group without lead')
-        return
+        M._abort_scenario_generation('CSG group without lead')
     end
     ScenEdit_SetUnit({ guid = lead.guid, group = group_name, groupLead = lead.guid })
     for _, u in ipairs(members) do
@@ -2093,8 +2087,7 @@ function M.assert_db_series(scenario_year, expected)
     M.state.db_series = db_series
     M.state.scenario_year = scenario_year
     if db_series ~= expected then
-        print('ERROR: Scenario year ' .. scenario_year .. ' expects database series ' .. expected)
-        return false
+        M._abort_scenario_generation('Scenario year ' .. scenario_year .. ' expects database series ' .. expected)
     end
     return true
 end

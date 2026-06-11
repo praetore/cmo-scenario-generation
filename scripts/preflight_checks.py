@@ -2229,7 +2229,7 @@ def _validate_unit_mission_assignments(content, mission_map):
     direct_units = _parse_direct_place_units(content, _PLACE_UNIT_CALLS)
     unit_tables = _parse_lua_tables_with_place_calls(content, _PLACE_UNIT_CALLS)
     assigned_refs = _parse_direct_mission_assigned_refs(content)
-    assigned_tables, assigned_table_fields = _parse_tables_assigned_via_pairs_loop(content)
+    assigned_tables, assigned_table_fields, assigned_inline_vars = _parse_tables_assigned_via_pairs_loop(content)
     csg_members, csg_lead = _parse_csg_group_members(content)
     field_parent_table = {}
     for table_name, fields in unit_tables.items():
@@ -2264,6 +2264,9 @@ def _validate_unit_mission_assignments(content, mission_map):
             assigned_count += 1
             continue
         if parent_table and f"{parent_table}.{ref}" in assigned_table_fields:
+            assigned_count += 1
+            continue
+        if ref in assigned_inline_vars:
             assigned_count += 1
             continue
         unassigned.append((ref, info.get("name") or ref, info.get("kind"), info.get("side")))

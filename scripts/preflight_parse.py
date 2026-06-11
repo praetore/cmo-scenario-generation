@@ -720,6 +720,10 @@ def _parse_lua_timing_vars(content):
         m = re.search(rf"local\s+{key}\s*=\s*'([^']+)'", content, re.IGNORECASE)
         if m:
             out[key] = m.group(1)
+    if "strike_package_date" not in out:
+        spd = _parse_strike_package_date(content)
+        if spd:
+            out["strike_package_date"] = spd
     return out
 
 def _max_distance_nm(origin, targets):
@@ -1048,6 +1052,15 @@ def _parse_scenario_date(content):
     """local scenario_date = 'YYYY/MM/DD' — canonical in-game calendar day."""
     match = re.search(r"local\s+scenario_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
     return _normalize_date_slash_key(match.group(1)) if match else None
+
+def _parse_strike_package_date(content):
+    """Strike-package calendar day (literal or aliased from scenario_date)."""
+    match = re.search(
+        r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE
+    )
+    if match:
+        return _normalize_date_slash_key(match.group(1))
+    return _parse_scenario_date(content)
 
 def _unit_service_record(db, table, unit_id, series, version):
     """Name, YearCommissioned, YearDecommissioned from DataAircraft, DataShip, or DataSubmarine."""
@@ -1543,12 +1556,13 @@ def _parse_tables_assigned_via_pairs_loop(content):
     """Tables (or table.field refs) assigned via for _, u in pairs(...) do ... AssignUnitToMission(u.guid)."""
     assigned_tables = set()
     assigned_table_fields = set()
+    assigned_inline_vars = set()
     table_loop = re.compile(
-        r"for\s+_,\s*(\w+)\s+in\s+pairs\s*\(\s*(\w+)\s*\)\s+do",
+        r"for\s+_,\s*(\w+)\s+in\s+(?:pairs|ipairs)\s*\(\s*(\w+)\s*\)\s+do",
         re.IGNORECASE,
     )
     inline_loop = re.compile(
-        r"for\s+_,\s*(\w+)\s+in\s+pairs\s*\(\s*\{([^}]+)\}\s*\)\s+do",
+        r"for\s+_,\s*(\w+)\s+in\s+(?:pairs|ipairs)\s*\(\s*\{([^}]+)\}\s*\)\s+do",
         re.IGNORECASE,
     )
     assign_iter = re.compile(
@@ -1575,10 +1589,15 @@ def _parse_tables_assigned_via_pairs_loop(content):
         iter_var = loop_match.group(1)
         if not _body_assigns_iter(loop_match.end(), iter_var):
             continue
-        for table_name, field_name in re.findall(r"(\w+)\.(\w+)", loop_match.group(2)):
+        inline_body = loop_match.group(2)
+        for table_name, field_name in re.findall(r"(\w+)\.(\w+)", inline_body):
             assigned_table_fields.add(f"{table_name}.{field_name}")
+        for bare_var in re.findall(r"\b([A-Za-z_]\w*)\b", inline_body):
+            if bare_var in ("true", "false", "nil"):
+                continue
+            assigned_inline_vars.add(bare_var)
 
-    return assigned_tables, assigned_table_fields
+    return assigned_tables, assigned_table_fields, assigned_inline_vars
 
 def _parse_direct_mission_assigned_refs(content):
     refs = set()
@@ -1947,11 +1966,11 @@ def _parse_mission_schedule_settings(content):
 
 def _parse_isr_on_station_schedule(content):
     """ISR Support on-station via set_patrol_on_station_schedule (CreateMissionFlightPlan TIMEONTARGET)."""
-    date_m = re.search(r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    date = _parse_strike_package_date(content)
     isr_station_m = re.search(
         r"local\s+isr_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
     )
-    if not (date_m and isr_station_m):
+    if not (date and isr_station_m):
         return {}
     if not re.search(
         r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR Orbit",
@@ -1959,7 +1978,6 @@ def _parse_isr_on_station_schedule(content):
         re.IGNORECASE,
     ):
         return {}
-    date = date_m.group(1)
     station = isr_station_m.group(1)
     return {"Caribbean ISR Orbit": {"time_on_target": f"{date} {station}"}}
 
@@ -1999,7 +2017,7 @@ def _parse_bootstrap_naval_schedule(content):
 
 def _parse_sead_timed_mission_loop(content):
     """Variable-based SEAD delay loop: for _, sead_mission in ipairs(sead_timed_missions)."""
-    date_m = re.search(r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    date = _parse_strike_package_date(content)
     station_m = re.search(r"local\s+sead_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE)
     takeoff_m = re.search(r"local\s+sead_package_takeoff\s*=\s*'([^']+)'", content, re.IGNORECASE)
     list_m = re.search(
@@ -2007,7 +2025,7 @@ def _parse_sead_timed_mission_loop(content):
         content,
         re.IGNORECASE | re.DOTALL,
     )
-    if not (date_m and list_m):
+    if not (date and list_m):
         return {}
     if not re.search(
         r"for\s+_\s*,\s*sead_mission\s+in\s+ipairs\s*\(\s*sead_(?:timed|shooter)_missions\s*\)",
@@ -2028,7 +2046,6 @@ def _parse_sead_timed_mission_loop(content):
         re.findall(r"'([^']+)'", escort_list_m.group(1)) if escort_list_m else []
     )
     escort_station = escort_station_m.group(1) if escort_station_m else None
-    date = date_m.group(1)
     if station_m and re.search(
         r"set_patrol_on_station_schedule\s*\([\s\S]*?sead_on_station_dt",
         content,
@@ -2058,7 +2075,7 @@ def _parse_sead_timed_mission_loop(content):
 
 def _parse_naval_timed_mission_loop(content):
     """ScenEdit_SetMission for Caribbean TLAM Salvo-style blocks with tlam_launch_dt."""
-    date_m = re.search(r"local\s+strike_package_date\s*=\s*'([^']+)'", content, re.IGNORECASE)
+    date = _parse_strike_package_date(content)
     launch_m = re.search(r"local\s+tlam_launch_time\s*=\s*'([^']+)'", content, re.IGNORECASE)
     tot_m = re.search(r"local\s+strike_package_tot\s*=\s*'([^']+)'", content, re.IGNORECASE)
     mission_m = re.search(
@@ -2068,17 +2085,17 @@ def _parse_naval_timed_mission_loop(content):
         content,
         re.IGNORECASE,
     )
-    if not (date_m and launch_m and mission_m):
+    if not (date and launch_m and mission_m):
         return {}
     lua_vars = _parse_lua_string_vars(content)
     mission_name = _resolve_lua_mission_name(mission_m.group(1), lua_vars)
-    launch_dt = f"{date_m.group(1)} {launch_m.group(1)}"
+    launch_dt = f"{date} {launch_m.group(1)}"
     row = {
         "starttime": launch_dt,
         "takeoff_time": launch_dt,
     }
     if tot_m:
-        row["time_on_target"] = f"{date_m.group(1)} {tot_m.group(1)}"
+        row["time_on_target"] = f"{date} {tot_m.group(1)}"
     return {mission_name: row}
 
 def _aircraft_count_on_strike_missions(content, mission_map):
@@ -2141,7 +2158,7 @@ def _normalize_date_key(date_str):
 def _parse_scenario_start_time(content):
     """(date_key, time_hhmmss) from ScenEdit_SetTime or cmo.scenario_set_start."""
     helper = re.search(
-        r"(?:cmo\.)?scenario_set_start\s*\(\s*scenario_date\s*,\s*(?:scenario_start_time|['\"]([^'\"]+)['\"])\s*\)",
+        r"(?:cmo\.)?scenario_set_start\s*\(\s*(?:scenario_date|strike_package_date)\s*,\s*(?:scenario_start_time|['\"]([^'\"]+)['\"])\s*\)",
         content,
         re.IGNORECASE,
     )
@@ -2614,7 +2631,23 @@ def _parse_mission_side_zones(content):
     for match in header.finditer(body):
         side = _resolve_lua_side_token(match.group(1), lua_vars)
         mission = _resolve_lua_mission_name(match.group(2), lua_vars)
-        snippet = body[match.end() : match.end() + 800]
+        opts_start = body.find("{", match.end())
+        if opts_start < 0:
+            continue
+        depth = 0
+        opts_end = None
+        for i in range(opts_start, len(body)):
+            ch = body[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    opts_end = i + 1
+                    break
+        if opts_end is None:
+            continue
+        snippet = body[opts_start:opts_end]
         zone_m = re.search(r"zone\s*=\s*\{([^}]+)\}", snippet, re.IGNORECASE)
         if not zone_m:
             continue

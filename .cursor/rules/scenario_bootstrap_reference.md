@@ -179,7 +179,7 @@ Use these in scenarios — do not reimplement schedule logic ad hoc.
 
 | Prefix | Meaning |
 | :--- | :--- |
-| `ERROR:` | Hard failure |
+| `ERROR:` | Hard failure — aborts scenario Lua init (`error()` after log line) |
 | `WARNING:` | Suspicious; no known Play workaround |
 | `NOTE:` | Expected import quirk |
 | `OK:` | Verified success |
