@@ -73,7 +73,7 @@ class TypeResolver:
         self._cache = {}
         self.stats = {"matched": {}, "fallback": {}}
         try:
-            self._db = open_db(db_path=db_path, series=series, version=version, prefer_source=True)
+            self._db = open_db(db_path=db_path, series=series, version=version)
         except Exception as exc:  # noqa: BLE001 - degrade to fallback-only
             self.db_error = str(exc)
         else:

@@ -35,27 +35,14 @@ def _is_nuclear_cruise_weapon_name(weapon_name: str | None) -> bool:
     return False
 
 
-def query_nuclear_weapon_dbids(
-    db_path=None,
-    series=None,
-    version=None,
-    *,
-    force_master=False,
-    prefer_source=False,
-):
+def query_nuclear_weapon_dbids(db_path=None, series=None, version=None):
     """
     Return (all_nuclear_dbids, cruise_nuclear_dbids) from DB warhead links.
 
     - all: any DataWeapon with a DataWarhead where Type = WARHEAD_TYPE_NUCLEAR (4001)
     - cruise: subset of guided weapons (Type 2001) that are nuclear land-attack cruise
     """
-    db = open_db(
-        db_path=db_path,
-        series=series,
-        version=version,
-        force_master=force_master,
-        prefer_source=prefer_source,
-    )
+    db = open_db(db_path=db_path, series=series, version=version)
     try:
         query = """
             SELECT DISTINCT w.ID, w.Name, w.Type

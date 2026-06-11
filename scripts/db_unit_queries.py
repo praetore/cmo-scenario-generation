@@ -3,20 +3,11 @@
 from cmo_db import open_db
 
 
-def get_loadouts(aircraft_id, series=None, version=None, db_path=None, force_master=False, prefer_source=False):
-    db = open_db(
-        db_path=db_path,
-        series=series,
-        version=version,
-        prefer_source=prefer_source,
-        force_master=force_master,
-    )
+def get_loadouts(aircraft_id, series=None, version=None, db_path=None):
+    db = open_db(db_path=db_path, series=series, version=version)
     cursor = db.cursor
 
-    dal_query = "SELECT ComponentID"
-    if db.master:
-        dal_query += ", db_series, db_version"
-    dal_query += " FROM DataAircraftLoadouts WHERE ID = ?"
+    dal_query = "SELECT ComponentID FROM DataAircraftLoadouts WHERE ID = ?"
     params = [aircraft_id]
     dal_query, params = db.append_meta_filters(dal_query, params)
     cursor.execute(dal_query, params)
@@ -26,21 +17,9 @@ def get_loadouts(aircraft_id, series=None, version=None, db_path=None, force_mas
         db.close()
         return []
 
-    if db.master and not version:
-        dal_rows.sort(key=lambda row: (row[1], row[2]), reverse=True)
-        latest_series = dal_rows[0][1]
-        latest_version = dal_rows[0][2]
-        comp_ids = [
-            row[0]
-            for row in dal_rows
-            if row[1] == latest_series and row[2] == latest_version
-        ]
-        series = series or latest_series
-        version = version or latest_version
-    else:
-        comp_ids = [row[0] for row in dal_rows]
-        series = series or db.series
-        version = version or db.version
+    comp_ids = [row[0] for row in dal_rows]
+    series = series or db.series
+    version = version or db.version
 
     placeholders = ",".join(["?"] * len(comp_ids))
     dl_query = f"SELECT ID, Name, {db.meta_select()} FROM DataLoadout WHERE ID IN ({placeholders})"
@@ -54,22 +33,8 @@ def get_loadouts(aircraft_id, series=None, version=None, db_path=None, force_mas
     return results
 
 
-def get_unit_weapons(
-    unit_id,
-    unit_type,
-    series=None,
-    version=None,
-    db_path=None,
-    force_master=False,
-    prefer_source=False,
-):
-    db = open_db(
-        db_path=db_path,
-        series=series,
-        version=version,
-        prefer_source=prefer_source,
-        force_master=force_master,
-    )
+def get_unit_weapons(unit_id, unit_type, series=None, version=None, db_path=None):
+    db = open_db(db_path=db_path, series=series, version=version)
     cursor = db.cursor
 
     table_map = {
@@ -93,22 +58,17 @@ def get_unit_weapons(
         unit_params = [unit_id]
 
     if mag_table:
-        query = f"SELECT ComponentID"
-        if db.master:
-            query += ", db_series, db_version"
-        query += f" FROM {mag_table} WHERE ID = ?"
+        query = f"SELECT ComponentID FROM {mag_table} WHERE ID = ?"
         params = list(unit_params)
         query, params = db.append_meta_filters(query, params)
         cursor.execute(query, params)
         mag_links = cursor.fetchall()
 
         for row in mag_links:
-            if db.master:
-                mag_id, ser, ver = row
-            else:
-                mag_id, ser, ver = row[0], db.series, db.version
+            mag_id = row[0]
+            ser, ver = db.series, db.version
 
-            name_query = f"SELECT Name FROM DataMagazine WHERE ID = ?"
+            name_query = "SELECT Name FROM DataMagazine WHERE ID = ?"
             name_params = [mag_id]
             name_query, name_params = db.append_meta_filters(name_query, name_params)
             cursor.execute(name_query, name_params)
@@ -131,22 +91,17 @@ def get_unit_weapons(
             )
 
     if mount_table:
-        query = f"SELECT ComponentID"
-        if db.master:
-            query += ", db_series, db_version"
-        query += f" FROM {mount_table} WHERE ID = ?"
+        query = f"SELECT ComponentID FROM {mount_table} WHERE ID = ?"
         params = list(unit_params)
         query, params = db.append_meta_filters(query, params)
         cursor.execute(query, params)
         mount_links = cursor.fetchall()
 
         for row in mount_links:
-            if db.master:
-                mount_id, ser, ver = row
-            else:
-                mount_id, ser, ver = row[0], db.series, db.version
+            mount_id = row[0]
+            ser, ver = db.series, db.version
 
-            name_query = f"SELECT Name FROM DataMount WHERE ID = ?"
+            name_query = "SELECT Name FROM DataMount WHERE ID = ?"
             name_params = [mount_id]
             name_query, name_params = db.append_meta_filters(name_query, name_params)
             cursor.execute(name_query, name_params)

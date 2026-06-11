@@ -3,12 +3,8 @@
 # Install with:
 #   python -m pip install -r requirements.txt
 #
-# PyYAML backs the declarative scenario specs (scripts/generate_scenario.py,
-# scenario_schema.py).
-PyYAML>=6.0
-
-# global-land-mask powers the preflight ship/sub land-vs-water check in
-# scripts/scenario_checks.py (_validate_ship_sub_water_placement). It ships a
+# global-land-mask powers the preflight land/water placement check in
+# scripts/scenario_checks.py (_validate_unit_geo_placement). It ships a
 # NOAA-derived ~1 km land/ocean mask and pulls in numpy as a dependency.
 # The check degrades to a warning when the package is missing, so it is
 # technically optional but strongly recommended.

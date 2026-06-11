@@ -3,16 +3,16 @@
 Auth is via the ``x-apikey`` header. The key is resolved through
 ``cmo_config.resolve_aeroapi_key`` (env ``AEROAPI_API_KEY`` or ``cmo_config.ini``
 ``[aeroapi] api_key``). When no key is configured the higher-level tooling
-(``flights_to_cmo.py``) skips AeroAPI features instead of failing.
+(``traffic_flights_to_cmo.py``) skips AeroAPI features instead of failing.
 
 Reference: .cursor/rules/aeroapi_reference.md
 
 CLI quick checks (no live call needed for ``key-status``):
-    python scripts/aeroapi.py key-status
-    python scripts/aeroapi.py count   --query "-latlong \"52.6 3.3 50.7 7.2\""
-    python scripts/aeroapi.py search  --query "-latlong \"52.6 3.3 50.7 7.2\"" --max-pages 1
-    python scripts/aeroapi.py positions --query "{range alt 50 400}" --unique
-    python scripts/aeroapi.py flight  UAL4
+    python scripts/traffic_aeroapi.py key-status
+    python scripts/traffic_aeroapi.py count   --query "-latlong \"52.6 3.3 50.7 7.2\""
+    python scripts/traffic_aeroapi.py search  --query "-latlong \"52.6 3.3 50.7 7.2\"" --max-pages 1
+    python scripts/traffic_aeroapi.py positions --query "{range alt 50 400}" --unique
+    python scripts/traffic_aeroapi.py flight  UAL4
 """
 
 import argparse

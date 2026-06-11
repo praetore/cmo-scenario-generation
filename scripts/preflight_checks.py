@@ -1,12 +1,12 @@
-"""Scenario preflight validators (used by db_search.validate_scenario_air_loadouts)."""
+"""Scenario preflight validators (used by preflight_validate.validate_scenario_air_loadouts)."""
 
 import math
 import re
 
 from db_unit_queries import get_unit_weapons
-from scenario_constants import *
-from scenario_lua import *
-from scenario_report import extend_report, run_check
+from preflight_constants import *
+from preflight_parse import *
+from preflight_report import extend_report, run_check
 
 def _validate_patrol_zone_proximity(content, mission_map, ships):
     errors = []
@@ -99,10 +99,7 @@ def _validate_csg_formation(content, air_carrier_vars):
     csg_group = _parse_csg_group_constant(content)
     group_map = _parse_unit_group_assignments(content)
     scenario_body = content.split("-- [preflight: scenario_bootstrap.lua]")[0]
-    grouped_tlam = bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
-    detached_tlam = bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
-    if grouped_tlam:
-        detached_tlam = False
+    grouped_tlam = bool(re.search(_GROUPED_CSG_STRIKE_CALL, scenario_body, re.IGNORECASE))
     has_form_helper = bool(
         re.search(r"function\s+(?:M\.)?form_csg_group\s*\(", content, re.IGNORECASE)
         or re.search(r"form_csg_group\s*=\s*cmo\.form_csg_group", content, re.IGNORECASE)
@@ -113,8 +110,6 @@ def _validate_csg_formation(content, air_carrier_vars):
     if has_form_call and csg_group:
         for var in _CSG_GROUP_MEMBER_VARS:
             if re.search(rf"\blocal\s+{var}\s*=", content):
-                if detached_tlam and var == _CSG_STRIKE_SHIP_VAR:
-                    continue
                 group_map[var] = csg_group
 
     placed_csg = [var for var in _CSG_FORMATION_VARS if re.search(rf"\blocal\s+{var}\s*=", content)]
@@ -144,10 +139,6 @@ def _validate_csg_formation(content, air_carrier_vars):
             for var in _CSG_GROUP_MEMBER_VARS
             if re.search(rf"\blocal\s+{var}\s*=", content)
         ]
-        if detached_tlam:
-            placed_group_members = [
-                v for v in placed_group_members if v != _CSG_STRIKE_SHIP_VAR
-            ]
         missing_group = [
             var for var in placed_group_members if group_map.get(var) != csg_group
         ]
@@ -159,30 +150,14 @@ def _validate_csg_formation(content, air_carrier_vars):
             )
         elif len(placed_group_members) >= 2:
             suffix = (
-                " (CVN+DDGs; CG detached TLAM shooter)."
-                if detached_tlam
-                else (
-                    " (full CSG on strike)."
-                    if re.search(r"setup_csg_strike_on_air_strike\s*\(", content, re.IGNORECASE)
-                    else " (CSG hull on strike)."
-                ) if grouped_tlam else "."
+                " (unified strike package)."
+                if grouped_tlam
+                else "."
             )
             ok.append(
                 f"OK: CSG formation — {len(placed_group_members)} ship(s) in group '{csg_group}'" + suffix
             )
-        cg_in_group_tlam_fix = bool(
-            grouped_tlam
-            or re.search(
-                rf"form_csg_group\s*\([\s\S]{{0,800}}?{_ASSIGN_TLAM_SHOOTER_CALL}",
-                content,
-                re.IGNORECASE,
-            )
-            or re.search(
-                rf"apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
-                content,
-                re.IGNORECASE,
-            )
-        )
+        cg_in_group_tlam_fix = grouped_tlam
         if (
             _CSG_STRIKE_SHIP_VAR in placed_csg
             and group_map.get(_CSG_STRIKE_SHIP_VAR) == csg_group
@@ -190,7 +165,7 @@ def _validate_csg_formation(content, air_carrier_vars):
         ):
             warnings.append(
                 f"CSG formation: '{_CSG_STRIKE_SHIP_VAR}' is in formation group '{csg_group}' without "
-                "assign_tlam_shooter after form_csg_group — TLAM Strike assignment may be cleared."
+                "setup_csg_strike_on_air_strike after form_csg_group — TLAM strike assignment may be missing."
             )
     elif len(placed_csg) >= 2:
         errors.append(
@@ -203,38 +178,18 @@ def _validate_csg_formation(content, air_carrier_vars):
             "CSG formation: form_csg_group() is defined but never called."
         )
 
-    has_assign_helper = bool(
-        re.search(r"function\s+(?:M\.)?assign_csg_group_missions\s*\(", content, re.IGNORECASE)
+    station_assigned = bool(
+        re.search(
+            rf"ScenEdit_SetMission\s*\([^)]*'(?:Carrier CAP|Carrier AEW|CSG Station Keeping)'",
+            scenario_body,
+            re.IGNORECASE,
+        )
         or re.search(
-            r"assign_csg_group_missions\s*=\s*cmo\.assign_csg_group_missions",
-            content,
+            rf"ScenEdit_AssignUnitToMission\s*\(\s*{_CSG_GROUP_LEAD_VAR}\.guid",
+            scenario_body,
             re.IGNORECASE,
         )
     )
-    has_assign_call = bool(
-        re.search(r"assign_csg_group_missions\s*\(", scenario_body, re.IGNORECASE)
-    )
-    has_tlam_ship_helper = bool(
-        re.search(r"function\s+(?:M\.)?assign_ship_to_mission\s*\(", content, re.IGNORECASE)
-        and re.search(r"assign_tlam_shooter\s*\(", content, re.IGNORECASE)
-    )
-    has_apply_naval = (
-        bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
-        or bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
-        or bool(
-            re.search(
-                rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
-                scenario_body,
-                re.IGNORECASE,
-            )
-        )
-    )
-    station_assigned = has_assign_call and "nimitz" in placed_csg
-    if has_form_call and not has_assign_helper:
-        warnings.append(
-            "CSG formation: form_csg_group() without assign_csg_group_missions() — "
-            "assign patrol only to the group lead, not each escort."
-        )
 
     patrol_assigns = {}
     for match in re.finditer(
@@ -267,20 +222,14 @@ def _validate_csg_formation(content, air_carrier_vars):
             )
         )
         if has_csg_station:
-            errors.append(
-                f"CSG formation: group lead '{_CSG_GROUP_LEAD_VAR}' must use assign_csg_group_missions() "
-                f"with patrol '{_CSG_PATROL_MISSION.title()}'."
+            warnings.append(
+                f"CSG formation: group lead '{_CSG_GROUP_LEAD_VAR}' should carry carrier patrol "
+                f"(ScenEdit_SetMission or AssignUnitToMission on lead only — not group-wide)."
             )
         elif re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, content, re.IGNORECASE):
-            if grouped_tlam:
-                ok.append(
-                    "OK: CSG formation — group-only (no CSG Station Keeping); CG on strike in formation."
-                )
-            else:
-                warnings.append(
-                    "CSG formation: no surface patrol on CVN lead (CSG Station Keeping omitted) — "
-                    "formation via group only; CG on separate TLAM strike."
-                )
+            ok.append(
+                "OK: CSG formation — group-only (no CSG Station Keeping); unified strike package in formation."
+            )
 
     if _CSG_STRIKE_SHIP_VAR in placed_csg:
         striker_missions = patrol_assigns.get(_CSG_STRIKE_SHIP_VAR, [])
@@ -291,84 +240,27 @@ def _validate_csg_formation(content, air_carrier_vars):
                     "Strike (e.g. Caribbean TLAM Salvo) while the ship stays in the CSG group."
                 )
         striker_on_tlam = bool(
-            re.search(
-                rf"assign_csg_group_missions\s*\([^,]+,\s*\w+\s*,\s*'[^']+'\s*,\s*{_CSG_STRIKE_SHIP_VAR}\s*,\s*(?:'[^']+'|TLAM_STRIKE_MISSION|\w+)\s*\)",
-                scenario_body,
-                re.IGNORECASE,
-            )
-            or re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, scenario_body, re.IGNORECASE)
+            re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, scenario_body, re.IGNORECASE)
         )
-        if station_assigned and striker_on_tlam and not detached_tlam:
+        if striker_on_tlam and grouped_tlam:
             ok.append(
-                "OK: CSG formation — CG on timed TLAM strike; CVN/DDGs follow group lead patrol."
+                "OK: CSG TLAM — unified strike package (setup_csg_strike_on_air_strike)."
             )
-        elif striker_on_tlam and not detached_tlam and not station_assigned:
-            strike_label = (
-                "Caribbean Thunder Strike in formation"
-                if grouped_tlam
-                else "timed TLAM strike"
-            )
-            ok.append(
-                f"OK: CSG formation — CG on {strike_label}; CVN has no surface patrol (group-only formation)."
-            )
-        elif not striker_on_tlam and not detached_tlam and station_assigned:
-            warnings.append(
-                f"CSG formation: CG '{_CSG_STRIKE_SHIP_VAR}' has no Caribbean TLAM Salvo via assign_csg_group_missions."
-            )
-        if (
-            has_tlam_ship_helper
-            and group_map.get(_CSG_STRIKE_SHIP_VAR) == csg_group
-            and not has_apply_naval
-            and not grouped_tlam
-        ):
+        elif not striker_on_tlam and grouped_tlam:
             errors.append(
-                "CSG TLAM: use setup_csg_tlam_on_air_strike(cg, CSG_GROUP) — grouped CG needs in-group strike assign."
+                "CSG TLAM: form_csg_group without setup_csg_strike_on_air_strike — "
+                "unify naval strike assets on the package mission after the air flight plan."
             )
-        elif grouped_tlam:
-            if re.search(r"setup_csg_strike_on_air_strike\s*\(", scenario_body, re.IGNORECASE):
-                ok.append(
-                    "OK: CSG TLAM — unified strike package (setup_csg_strike_on_air_strike)."
-                )
-            else:
-                ok.append(
-                    "OK: CSG TLAM — naval strike asset on unified package (setup_csg_tlam_on_air_strike)."
-                )
-        elif has_apply_naval and detached_tlam:
-            if re.search(r"setup_tlam_on_air_strike\s*\(", scenario_body, re.IGNORECASE):
-                ok.append(
-                    "OK: CSG TLAM — CG on unified strike package (setup_tlam_on_air_strike; shared TOT in ME)."
-                )
-            else:
-                ok.append(
-                    "OK: CSG TLAM — solo CG shooter (setup_solo_tlam_shooter / detached from CSG group)."
-                )
-        elif has_apply_naval and not detached_tlam:
-            ok.append(
-                "OK: CSG TLAM — apply_naval_strike_flight_plan (legacy grouped path — prefer setup_solo_tlam_shooter)."
+        elif not striker_on_tlam and station_assigned:
+            warnings.append(
+                f"CSG formation: CG '{_CSG_STRIKE_SHIP_VAR}' has no unified strike package assignment."
             )
 
-    if (
-        csg_group
-        and re.search(rf"form_csg_group\s*\([^)]*{_CSG_STRIKE_SHIP_VAR}", scenario_body, re.IGNORECASE)
-        and not grouped_tlam
+    if re.search(
+        r"ScenEdit_AssignUnitToMission\s*\(\s*CSG_GROUP\s*,\s*'CSG Station Keeping'",
+        content,
+        re.IGNORECASE,
     ):
-        warnings.append(
-            f"CSG TLAM: '{_CSG_STRIKE_SHIP_VAR}' in form_csg_group without setup_csg_tlam_on_air_strike — "
-            "use setup_csg_tlam_on_air_strike(cg, CSG_GROUP) after air flight plan."
-        )
-    group_patrol = bool(
-        re.search(
-            r"ScenEdit_AssignUnitToMission\s*\(\s*CSG_GROUP\s*,\s*'CSG Station Keeping'",
-            content,
-            re.IGNORECASE,
-        )
-        or re.search(
-            r"AssignUnitToMission\s*\(\s*group_name\s*,\s*patrol_mission",
-            content,
-            re.IGNORECASE,
-        )
-    )
-    if has_assign_helper and group_patrol:
         warnings.append(
             "CSG formation: AssignUnitToMission(group_name, patrol) clears TLAM shooters in the ME — "
             "assign patrol on the group lead only."
@@ -383,8 +275,8 @@ def _validate_csg_formation(content, air_carrier_vars):
 
 def _validate_tlam_schedule_workflow(content):
     """
-    CMO clears naval Strike starttime/TOT when SetUnit/AssignUnitToMission assigns the CG.
-    Bootstrap setup_solo_tlam_shooter restores schedule via set_naval_strike_schedule at init.
+    CMO clears naval Strike starttime/TOT when SetUnit/AssignUnitToMission assigns ships.
+    setup_csg_strike_on_air_strike restores schedule via set_naval_strike_schedule at init.
     """
     errors = []
     warnings = []
@@ -393,7 +285,7 @@ def _validate_tlam_schedule_workflow(content):
 
     has_naval = bool(
         re.search(
-            r"@naval_package|TLAM_STRIKE_MISSION|apply_naval_strike_flight_plan",
+            r"@naval_package|TLAM_STRIKE_MISSION|setup_csg_strike_on_air_strike",
             content,
             re.IGNORECASE,
         )
@@ -402,73 +294,26 @@ def _validate_tlam_schedule_workflow(content):
         return errors, warnings, ok
 
     apply_fn = re.search(
-        r"function\s+M\.(?:apply_naval_strike_flight_plan|setup_solo_tlam_shooter|"
-        r"setup_csg_strike_on_air_strike|setup_csg_tlam_on_air_strike)\s*\([\s\S]*?^end",
+        r"function\s+M\.setup_csg_strike_on_air_strike\s*\([\s\S]*?^end",
         content,
         re.IGNORECASE | re.MULTILINE,
     )
     if apply_fn:
         body = apply_fn.group(0)
-        if "set_naval_strike_schedule" not in body and "ScenEdit_SetMission" not in body:
+        if "set_naval_strike_schedule" not in body:
             errors.append(
-                "TLAM schedule: setup_solo_tlam_shooter / apply_naval_strike_flight_plan must call "
-                "set_naval_strike_schedule (hardcoded starttime + TimeOnTargetStation) after CG assign."
+                "TLAM schedule: setup_csg_strike_on_air_strike must call "
+                "set_naval_strike_schedule (hardcoded starttime + TimeOnTargetStation) after ship assign."
             )
-        elif "set_naval_strike_schedule" in body:
-            ok.append("OK: TLAM schedule — hardcoded set_naval_strike_schedule after assign.")
-        assign_calls = list(re.finditer(r"_assign_solo_tlam_shooter\s*\(", body, re.IGNORECASE))
-        set_calls = list(re.finditer(r"set_naval_strike_schedule\s*\(", body, re.IGNORECASE))
-        if assign_calls and set_calls and set_calls[0].start() < assign_calls[-1].start():
-            errors.append(
-                "TLAM schedule: set_naval_strike_schedule must run after _assign_solo_tlam_shooter."
-            )
-        if not re.search(
-            rf"finalize_csg_tlam\s*\(\s*\w+\s*,\s*{_CSG_STRIKE_SHIP_VAR}",
-            content,
-            re.IGNORECASE,
-        ) and not re.search(
-            rf"(?:{_DETACHED_TLAM_CALL}|{_GROUPED_CSG_TLAM_CALL})",
-            scenario_body,
-            re.IGNORECASE,
-        ):
-            warnings.append(
-                "TLAM schedule: add setup_csg_tlam_on_air_strike, finalize_detached_tlam_shooter, or "
-                "setup_solo_tlam_shooter after apply_naval_strike_flight_plan."
-            )
-        elif re.search(
-            rf"finalize_csg_tlam\s*\(\s*\w+\s*,\s*{_CSG_STRIKE_SHIP_VAR}",
-            scenario_body,
-            re.IGNORECASE,
-        ):
-            ok.append("OK: TLAM schedule — finalize_csg_tlam at init end.")
-        elif re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE):
-            ok.append("OK: TLAM schedule — naval assets unified on strike package at init end.")
-        elif re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE):
-            ok.append("OK: TLAM schedule — solo/detached TLAM setup at init end.")
-        elif "restore_tlam_shooter_and_schedule" in body or "finalize_csg_tlam" in content:
-            ok.append("OK: TLAM schedule — finalize_csg_tlam inline restore at init end.")
+        else:
+            ok.append("OK: TLAM schedule — set_naval_strike_schedule in setup_csg_strike_on_air_strike.")
 
     if re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, scenario_body, re.IGNORECASE):
-        has_apply_naval = (
-            bool(re.search(_GROUPED_CSG_TLAM_CALL, scenario_body, re.IGNORECASE))
-            or bool(
-                re.search(
-                    rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
-                    scenario_body,
-                    re.IGNORECASE,
-                )
-            )
-            or bool(re.search(_DETACHED_TLAM_CALL, scenario_body, re.IGNORECASE))
-        )
-        if not has_apply_naval:
-            errors.append(
-                "TLAM schedule: use setup_csg_tlam_on_air_strike(cg, CSG_GROUP), setup_solo_tlam_shooter(cg), "
-                "apply_naval_strike_flight_plan(cg, nil), or finalize_detached_tlam_shooter — not inline SetMission alone."
-            )
+        ok.append("OK: TLAM schedule — naval assets unified on strike package at init end.")
         apply_pos = -1
         air_fp_pos = -1
         apply_call = re.search(
-            rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*{_CSG_STRIKE_SHIP_VAR}",
+            r"(?<!function\s)setup_csg_strike_on_air_strike\s*\(",
             scenario_body,
             re.IGNORECASE,
         )
@@ -483,9 +328,14 @@ def _validate_tlam_schedule_workflow(content):
             air_fp_pos = air_fp.start()
         if apply_pos >= 0 and air_fp_pos >= 0 and apply_pos < air_fp_pos:
             errors.append(
-                "TLAM schedule: apply_naval_strike_flight_plan must run after air "
-                "CreateMissionFlightPlan — naval assign clears mission times; sync last."
+                "TLAM schedule: setup_csg_strike_on_air_strike must run after air "
+                "CreateMissionFlightPlan — naval assign clears mission times."
             )
+    elif re.search(r"@naval_package", content, re.IGNORECASE):
+        errors.append(
+            "TLAM schedule: use setup_csg_strike_on_air_strike(group, {cvn, ddg, cg, ...}) "
+            "after the air flight plan — not inline SetMission alone."
+        )
 
     if re.search(
         r"ScenEdit_SetMission\s*\([^)]*TLAM[^)]*starttime\s*=\s*tlam_launch_dt",
@@ -493,8 +343,8 @@ def _validate_tlam_schedule_workflow(content):
         re.IGNORECASE,
     ):
         warnings.append(
-            "TLAM schedule: inline ScenEdit_SetMission(starttime=tlam_launch_dt) before CG assign "
-            "is wiped by SetUnit — use apply_naval_strike_flight_plan / sync_naval_strike_tot()."
+            "TLAM schedule: inline ScenEdit_SetMission(starttime=tlam_launch_dt) before ship assign "
+            "is wiped by SetUnit — use setup_csg_strike_on_air_strike + set_naval_strike_schedule."
         )
 
     gun_errors, gun_warnings, gun_ok = _validate_tlam_shooter_weapon_policy(content)
@@ -512,8 +362,7 @@ def _validate_tlam_shooter_weapon_policy(content):
 
     has_strike_ships = bool(
         re.search(
-            r"@naval_package|TLAM_STRIKE_MISSION|setup_solo_tlam_shooter|setup_csg_strike_on_air_strike|"
-            r"setup_csg_tlam_on_air_strike|setup_tlam_on_air_strike|assign_ship_to_mission",
+            r"@naval_package|TLAM_STRIKE_MISSION|setup_csg_strike_on_air_strike|assign_ship_to_mission",
             content,
             re.IGNORECASE,
         )
@@ -634,49 +483,28 @@ def _validate_tlam_shooter_weapon_policy(content):
             ok.append(
                 "OK: Strike ship guns — assign_ship_to_mission auto-applies policy on Strike missions."
             )
-    for fn_name, label in (
-        ("setup_csg_strike_on_air_strike", "setup_csg_strike_on_air_strike"),
-        ("setup_csg_tlam_on_air_strike", "setup_csg_tlam_on_air_strike"),
-        ("setup_tlam_on_air_strike", "setup_tlam_on_air_strike"),
-        ("setup_solo_tlam_shooter", "setup_solo_tlam_shooter"),
-    ):
-        fn_match = re.search(
-            rf"function\s+M\.{fn_name}\s*\([\s\S]*?^end",
-            content,
-            re.IGNORECASE | re.MULTILINE,
-        )
-        if fn_match:
-            body = fn_match.group(0)
-            has_policy = bool(
-                re.search(
-                    r"configure_strike_ship_weapon_policy|configure_tlam_shooter_weapon_policy",
-                    body,
-                )
+    fn_match = re.search(
+        r"function\s+M\.setup_csg_strike_on_air_strike\s*\([\s\S]*?^end",
+        content,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if fn_match:
+        body = fn_match.group(0)
+        has_policy = "configure_strike_ship_weapon_policy" in body
+        has_events = "add_strike_ship_weapon_policy_event" in body
+        if not has_policy:
+            errors.append(
+                "Strike ship guns: setup_csg_strike_on_air_strike must call configure_strike_ship_weapon_policy()."
             )
-            has_delegate = fn_name == "setup_csg_tlam_on_air_strike" and (
-                "setup_csg_strike_on_air_strike" in body
+        elif not has_events:
+            warnings.append(
+                "Strike ship guns: setup_csg_strike_on_air_strike should register "
+                "add_strike_ship_weapon_policy_event for Play-time WRA refresh."
             )
-            has_events = bool(
-                re.search(
-                    r"add_strike_ship_weapon_policy_event|add_tlam_shooter_weapon_policy_event",
-                    body,
-                )
+        else:
+            ok.append(
+                "OK: Strike ship guns — setup_csg_strike_on_air_strike applies policy + Play refresh."
             )
-            if not has_policy and not has_delegate:
-                errors.append(
-                    f"Strike ship guns: {fn_name} must call configure_strike_ship_weapon_policy()."
-                )
-            elif not has_events and not (
-                fn_name == "setup_csg_tlam_on_air_strike" and has_delegate
-            ):
-                warnings.append(
-                    f"Strike ship guns: {fn_name} should register "
-                    "add_strike_ship_weapon_policy_event for Play-time WRA refresh."
-                )
-            else:
-                ok.append(
-                    f"OK: Strike ship guns — {label} applies policy + Play refresh."
-                )
 
     mission_match = re.search(
         r"function\s+M\.configure_naval_strike_doctrine\s*\([\s\S]*?^end",
@@ -865,15 +693,19 @@ def _validate_strike_tot_synchronization(content, mission_map):
             f"strike_package_tot='{canonical_tot}'."
         )
 
-    if re.search(
+    legacy_sync = re.search(
         r"(?<!function\s)(?:sync_naval_strike_tot|sync_air_strike_tot|sync_strike_package_tot|"
-        r"restore_naval_strike_schedule)\s*\(",
+        r"restore_naval_strike_schedule|setup_solo_tlam_shooter|setup_tlam_on_air_strike|"
+        r"setup_csg_tlam_on_air_strike|apply_naval_strike_flight_plan|finalize_csg_tlam|"
+        r"finalize_detached_tlam_shooter|assign_tlam_shooter|assign_csg_group_missions)\s*\(",
         scenario_body,
         re.IGNORECASE,
-    ):
+    )
+    if legacy_sync:
         errors.append(
-            "Strike timing: do not call sync_* / restore_naval_strike_schedule in scenarios — "
-            "hardcode strike_package_tot and use set_naval_strike_schedule / CreateMissionFlightPlan TIMEONTARGET."
+            "Strike timing: remove legacy TLAM helpers (sync_*, setup_solo_tlam_shooter, "
+            "apply_naval_strike_flight_plan, finalize_csg_tlam, assign_tlam_shooter, …) — "
+            "use setup_csg_strike_on_air_strike + hardcoded strike_package_tot."
         )
 
     if not re.search(
@@ -902,16 +734,11 @@ def _validate_strike_tot_synchronization(content, mission_map):
     if re.search(r"TIMEONTARGET\s*=\s*strike_package_tot", scenario_body, re.IGNORECASE):
         ok.append(f"OK: Strike timing — air flight plan uses strike_package_tot {canonical_tot}.")
 
-    if re.search(_SOLO_TLAM_CALL, scenario_body, re.IGNORECASE):
+    if re.search(_GROUPED_CSG_STRIKE_CALL, scenario_body, re.IGNORECASE):
         if re.search(r"local\s+tlam_launch_time\s*=", scenario_body, re.IGNORECASE):
             ok.append(
-                f"OK: Strike timing — solo TLAM via setup_solo_tlam_shooter (hardcoded "
-                f"tlam_launch_time + strike_package_tot)."
-            )
-        else:
-            ok.append(
-                f"OK: Strike timing — solo TLAM TOT sync via setup_solo_tlam_shooter "
-                f"(TimeOnTargetStation = strike_package_tot {canonical_tot}; CMO auto-launch)."
+                f"OK: Strike timing — naval package via setup_csg_strike_on_air_strike "
+                f"(tlam_launch_time + strike_package_tot {canonical_tot})."
             )
 
     order_errors, order_warnings, order_ok = _validate_strike_schedule_order(scenario_body)
@@ -1594,7 +1421,7 @@ def _validate_no_nuclear_weapons(content, unique_pairs, ships, db, series, versi
         )
 
     # Ship DB templates: warn if default magazines include nuclear (Lua strip should run at runtime).
-    from nuclear_weapons_db import weapon_dbid_is_nuclear
+    from db_nuclear import weapon_dbid_is_nuclear
 
     for ship in ships:
         if ship.get("kind") == "sub":
@@ -2360,7 +2187,7 @@ def _validate_air_assign_after_mission_mutations(content):
             )
 
     if re.search(
-        r"setup_solo_tlam_shooter|setup_csg_tlam_on_air_strike|setup_tlam_on_air_strike|ensure_naval_strike_me_schedule|apply_naval_strike_flight_plan",
+        r"setup_csg_strike_on_air_strike",
         scenario_body,
         re.IGNORECASE,
     ):
@@ -2388,12 +2215,6 @@ def _validate_air_assign_after_mission_mutations(content):
         ok.append(
             "OK: Air assignment — bootstrap restores air after naval CreateMissionFlightPlan."
         )
-    elif re.search(r"ensure_naval_strike_me_schedule", content, re.IGNORECASE):
-        warnings.append(
-            "Air assignment: ensure_naval_strike_me_schedule should call "
-            "_restore_air_after_naval_schedule_mutation in bootstrap."
-        )
-
     return errors, warnings, ok
 
 def _validate_unit_mission_assignments(content, mission_map):
@@ -2410,10 +2231,6 @@ def _validate_unit_mission_assignments(content, mission_map):
     assigned_refs = _parse_direct_mission_assigned_refs(content)
     assigned_tables, assigned_table_fields = _parse_tables_assigned_via_pairs_loop(content)
     csg_members, csg_lead = _parse_csg_group_members(content)
-    has_csg_group_missions = bool(
-        re.search(r"assign_csg_group_missions\s*\(", content, re.IGNORECASE)
-    )
-
     field_parent_table = {}
     for table_name, fields in unit_tables.items():
         for field in fields:
@@ -2427,11 +2244,11 @@ def _validate_unit_mission_assignments(content, mission_map):
             assigned_count += 1
             continue
         if (
-            has_csg_group_missions
-            and csg_members
+            csg_members
             and ref in csg_members
             and ref != csg_lead
             and ref != _CSG_STRIKE_SHIP_VAR
+            and re.search(_GROUPED_CSG_STRIKE_CALL, content, re.IGNORECASE)
         ):
             assigned_count += 1
             continue
@@ -3504,22 +3321,16 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
         has_timing = bool(
             sched.get("starttime") or sched.get("takeoff_time") or sched.get("time_on_target")
         )
-        if not has_timing and re.search(r"apply_naval_strike_flight_plan\s*\(", content, re.IGNORECASE):
-            if naval_pkg.get("launch") or re.search(
-                r"(?:M\.)?sync_naval_strike_tot\s*\(", content, re.IGNORECASE
-            ):
-                has_timing = True
         if not has_timing and re.search(
-            r"setup_solo_tlam_shooter\s*\(|setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(",
+            r"setup_csg_strike_on_air_strike\s*\(",
             content,
             re.IGNORECASE,
         ):
-            if naval_pkg.get("tot") or sched.get("time_on_target"):
+            if naval_pkg.get("tot") or naval_pkg.get("launch") or sched.get("time_on_target"):
                 has_timing = True
 
         unified_air_tlam = bool(
             re.search(
-                r"setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(|"
                 r"setup_csg_strike_on_air_strike\s*\(",
                 content,
                 re.IGNORECASE,
@@ -3543,7 +3354,7 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
             if not has_timing and not (naval_pkg.get("launch") and naval_pkg.get("tot")):
                 errors.append(
                     f"Naval strike timing: '{label}' on shared Strike '{mission}' needs "
-                    "starttime + TimeOnTargetStation via setup_tlam_on_air_strike (see @naval_package)."
+                    "starttime + TimeOnTargetStation via setup_csg_strike_on_air_strike (see @naval_package)."
                 )
                 continue
 
@@ -3551,7 +3362,7 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
             errors.append(
                 f"Naval strike timing: '{label}' on Strike '{mission}' has no starttime or "
                 "TimeOnTargetStation — surface TLAMs fire immediately. Use "
-                "setup_solo_tlam_shooter(cg) or sync_naval_strike_tot() after assign (see @naval_package)."
+                "setup_csg_strike_on_air_strike after the air flight plan (see @naval_package)."
             )
             continue
 

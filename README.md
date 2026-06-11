@@ -33,13 +33,13 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 
 1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
 2. Save Lua under `generated/` on your machine (not in this git repo).
-3. Run **`scripts/db_search.py --validate-scenario …`** (must pass or warn).
+3. Run **`scripts/validate_scenario.py …`** (must pass or warn).
 4. **CMO import:** inline bootstrap (CMO has no `dofile`):
    ```bash
    python scripts/embed_bootstrap.py generated/YOUR_SCENARIO.lua
    ```
-   Load **`generated/YOUR_SCENARIO_import.lua`** in the scenario editor.
-5. Copy the `_import.lua` into CMO’s `Lua` folder if needed and execute from the editor.
+   Load **`generated/YOUR_SCENARIO.lua`** in the scenario editor (bootstrap is inlined in that file).
+5. Copy the scenario `.lua` into CMO’s `Lua` folder if needed and execute from the editor.
 
 ```mermaid
 flowchart LR
@@ -61,10 +61,11 @@ cmo-scenario-generation/
 ├── cmo_config.example.ini    ← copy to cmo_config.ini
 ├── generated/                ← local scenario Lua (gitignored)
 ├── scripts/                  ← Python (run from repo root)
-│   ├── db_search.py
-│   ├── merge_db.py
+│   ├── db_search.py             ← DB lookup CLI
+│   ├── validate_scenario.py     ← preflight CLI
+│   ├── embed_bootstrap.py       ← CMO import packaging
 │   ├── scenario_bootstrap.lua   ← shared Lua helpers (versioned)
-│   └── scenario_*.py
+│   └── preflight_*.py, db_*.py, traffic_*.py, cmo_*.py
 ├── DB/                       ← optional local .db3 copy (gitignored)
 └── .cursor/rules/
 ```
@@ -78,7 +79,7 @@ cmo-scenario-generation/
 
 You can still explore the repo:
 
-1. **Inspect preflight logic** — search `def _validate_` in `scripts/scenario_checks.py` (carrier groups, strike timing, loadout fit, nuclear policy, etc.).
+1. **Inspect preflight logic** — search `def _validate_` in `scripts/preflight_checks.py` (carrier groups, strike timing, loadout fit, nuclear policy, etc.).
 2. **Read authoring rules** — `.cursor/rules/logic_checks_cmo.md` (escorts, SEAD before strike, era-appropriate units).
 3. **Skim the API reference** — `.cursor/rules/cmo_api_reference.md` for `ScenEdit_*` patterns.
 
@@ -135,9 +136,9 @@ You should see a path to your DB folder and a count of `.db3` files.
 
 ## Python tooling
 
-Requires **Python 3.10+** (`sqlite3` + `PyYAML`). Run all commands from the **repository root**.
+Requires **Python 3.10+** (`sqlite3` in the standard library). Run all commands from the **repository root**.
 
-`--validate-scenario` also runs [luacheck](https://github.com/lunarmodules/luacheck) when available; on Windows it is downloaded automatically to `tools/luacheck/` on first use (`CMO_SKIP_LUACHECK_INSTALL=1` to disable).
+`validate_scenario.py` also runs [luacheck](https://github.com/lunarmodules/luacheck) when available; on Windows it is downloaded automatically to `tools/luacheck/` on first use (`CMO_SKIP_LUACHECK_INSTALL=1` to disable).
 
 Create `generated/` locally if it does not exist, then place your scenario `.lua` there.
 
@@ -154,7 +155,7 @@ python scripts/db_search.py --weapons 429 --type DataShip --series DB3K --versio
 Use the **same database series and version** your Lua script declares (see `db_series` / header comments in your file).
 
 ```bash
-python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --series DB3K --version 515
+python scripts/validate_scenario.py generated/YOUR_SCENARIO.lua --series DB3K --version 515
 ```
 
 Exit codes:
@@ -174,13 +175,8 @@ Preflight and search use the **version-locked source `.db3`** for your scenario 
 ## Running a scenario in CMO (step-by-step)
 
 1. **Install CMO** and configure database paths (see above).
-2. **Write or generate** a `.lua` scenario under `generated/` locally.
-   - Optional generator flow:
-     ```bash
-     python scripts/generate_scenario.py --spec generated/cuba_pressure_2026.yaml
-     ```
-     Use an explicit YAML spec each run (no default scenario selection). Also writes `*_briefing.txt` (plain text), `*_briefing.html` + `*_briefing_loaddoc.txt` (CMO HTML/LOADDOC), and appends an in-game HTML popup via `ScenEdit_SpecialMessage` when `briefing.show_popup` is true (CMO does **not** render Markdown).
-3. **Validate** with `scripts/db_search.py --validate-scenario` (above).
+2. **Write** a `.lua` scenario under `generated/` locally (player briefing can be embedded inline via `ScenEdit_SpecialMessage` in the script).
+3. **Validate** with `scripts/validate_scenario.py` (above).
 4. **Copy** the script into the game’s Lua directory (`[CMO install]/Lua/`, subfolders allowed).
 5. **Open CMO** → Scenario Editor → run the script from the **Lua Script Console**.
 6. Watch the in-game message log for `print()` output and errors.

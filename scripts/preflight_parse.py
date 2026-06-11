@@ -1,10 +1,10 @@
-"""Lua scenario parsing helpers for db_search preflight."""
+"""Lua scenario parsing helpers for preflight validation."""
 
 import math
 import re
 from pathlib import Path
 
-from scenario_constants import *
+from preflight_constants import *
 
 def load_scenario_lua_content(scenario_path):
     """Scenario file plus scenario_bootstrap.lua when the scenario dofile's it."""
@@ -873,7 +873,7 @@ def _loadout_nuclear_weapon_hits(
     db, loadout_id, series, version, loadout_name, required_only=False
 ):
     """[(weapon_name, optional)] for nuclear weapons credibly linked to this loadout."""
-    from nuclear_weapons_db import weapon_dbid_is_nuclear
+    from db_nuclear import weapon_dbid_is_nuclear
 
     query = """
         SELECT w.ID, w.Name, dlw.Optional
@@ -1588,28 +1588,10 @@ def _parse_direct_mission_assigned_refs(content):
         flags=re.IGNORECASE,
     ):
         refs.add(match.group(1))
-    for match in re.finditer(
-        r"assign_csg_group_missions\s*\(\s*[^,]+,\s*(\w+)\s*,\s*'[^']+'\s*,\s*(\w+)\s*,\s*'[^']+'\s*\)",
-        content,
-        flags=re.IGNORECASE,
-    ):
-        refs.add(match.group(1))
-        refs.add(match.group(2))
-    if re.search(r"assign_csg_group_missions\s*\(", content, re.IGNORECASE):
-        members, lead = _parse_csg_group_members(content)
-        if lead:
-            refs.add(lead)
-        for var in members:
-            if var != _CSG_STRIKE_SHIP_VAR:
-                refs.add(var)
     if re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, content, re.IGNORECASE):
-        refs.add(_CSG_STRIKE_SHIP_VAR)
-    if re.search(
-        rf"finalize_detached_tlam_shooter\s*\(\s*\w+\s*,\s*{_CSG_STRIKE_SHIP_VAR}",
-        content,
-        re.IGNORECASE,
-    ):
-        refs.add(_CSG_STRIKE_SHIP_VAR)
+        members, _lead = _parse_csg_group_members(content)
+        for var in members:
+            refs.add(var)
     return refs
 
 def _parse_air_spawn_wing_specs(content):
@@ -1648,14 +1630,6 @@ def _parse_ship_strike_assignments(content, mission_map):
             rows.append((match.group(1), mission))
     lua_vars = _parse_lua_string_vars(content)
     for match in re.finditer(
-        r"assign_csg_group_missions\s*\(\s*[^,]+,\s*\w+\s*,\s*'[^']+'\s*,\s*(\w+)\s*,\s*(?:'([^']+)'|(\w+))\s*\)",
-        content,
-        flags=re.IGNORECASE,
-    ):
-        mission = _resolve_lua_mission_name(match.group(2) or match.group(3), lua_vars)
-        if mission in strike_missions or _infer_mission_role(mission, mission_map) == "strike":
-            rows.append((match.group(1), mission))
-    for match in re.finditer(
         r"assign_ship_to_mission\s*\(\s*[^,]+,\s*(\w+)\s*,\s*'([^']+)'\s*\)",
         content,
         flags=re.IGNORECASE,
@@ -1675,41 +1649,6 @@ def _parse_ship_strike_assignments(content, mission_map):
         else (air_m.group(1) if air_m else "Caribbean TLAM Salvo")
     )
     scenario_only = content.split("-- [preflight: scenario_bootstrap.lua]")[0]
-    for match in re.finditer(
-        r"(?<!function\s)assign_tlam_shooter\s*\(\s*(\w+)\s*(?:,\s*\w+\s*)?\)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() in ("ship_unit", "strike_unit", "cg"):
-            continue
-        rows.append((ship_var, tlam_name))
-    for match in re.finditer(
-        rf"setup_solo_tlam_shooter\s*\(\s*(\w+)\s*\)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() not in ("ship_unit", "cg_unit"):
-            rows.append((ship_var, tlam_name))
-    for match in re.finditer(
-        rf"setup_tlam_on_air_strike\s*\(\s*(\w+)\s*\)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() not in ("ship_unit", "cg_unit"):
-            air_name = air_m.group(1) if air_m else tlam_name
-            rows.append((ship_var, air_name))
-    for match in re.finditer(
-        rf"setup_csg_tlam_on_air_strike\s*\(\s*(\w+)\s*,\s*\w+\s*\)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() not in ("ship_unit", "cg_unit"):
-            air_name = air_m.group(1) if air_m else tlam_name
-            rows.append((ship_var, air_name))
     csg_strike_inline = re.search(
         r"setup_csg_strike_on_air_strike\s*\(\s*\w+\s*,\s*\{([^}]+)\}\s*\)",
         scenario_only,
@@ -1737,23 +1676,6 @@ def _parse_ship_strike_assignments(content, mission_map):
                 continue
             if re.search(rf"\blocal\s+{re.escape(ship_var)}\s*=", content, re.IGNORECASE):
                 rows.append((ship_var, air_name))
-    for match in re.finditer(
-        rf"finalize_detached_tlam_shooter\s*\(\s*\w+\s*,\s*(\w+)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() not in ("cg_unit", "cg"):
-            rows.append((ship_var, tlam_name))
-    for match in re.finditer(
-        rf"(?<!function\s)apply_naval_strike_flight_plan\s*\(\s*(\w+)\s*(?:,\s*\w+\s*)?\)",
-        scenario_only,
-        re.IGNORECASE,
-    ):
-        ship_var = match.group(1)
-        if ship_var.lower() in ("shooter", "shooter_unit", "cg_unit"):
-            continue
-        rows.append((ship_var, tlam_name))
     return rows
 
 def _parse_strike_refuel_doctrine(content):
@@ -2042,8 +1964,8 @@ def _parse_isr_on_station_schedule(content):
     return {"Caribbean ISR Orbit": {"time_on_target": f"{date} {station}"}}
 
 def _parse_bootstrap_naval_schedule(content):
-    """TLAM schedule via sync_naval_strike_tot / apply_naval_strike_flight_plan (not inline SetMission)."""
-    if not re.search(r"function\s+M\.sync_naval_strike_tot\s*\(", content, re.IGNORECASE):
+    """TLAM schedule via setup_csg_strike_on_air_strike + set_naval_strike_schedule."""
+    if not re.search(r"function\s+M\.setup_csg_strike_on_air_strike\s*\(", content, re.IGNORECASE):
         return {}
     timing = _parse_lua_timing_vars(content)
     date = timing.get("strike_package_date")
@@ -2052,9 +1974,7 @@ def _parse_bootstrap_naval_schedule(content):
     if not (date and tot):
         return {}
     if not re.search(
-        r"(?:apply_naval_strike_flight_plan\s*\(|(?<!function\s)sync_naval_strike_tot\s*\(|"
-        r"setup_solo_tlam_shooter\s*\(|setup_tlam_on_air_strike\s*\(|setup_csg_tlam_on_air_strike\s*\(|"
-        r"setup_csg_strike_on_air_strike\s*\()",
+        r"(?<!function\s)setup_csg_strike_on_air_strike\s*\(",
         content,
         re.IGNORECASE,
     ):

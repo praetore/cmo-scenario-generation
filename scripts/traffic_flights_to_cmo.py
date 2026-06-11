@@ -14,10 +14,10 @@ KEY HANDLING
 
 USAGE
     # Live (box = MINLAT MINLON MAXLAT MAXLON):
-    python scripts/flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3"
+    python scripts/traffic_flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3"
 
     # Offline from a saved AeroAPI response (testable without a key):
-    python scripts/flights_to_cmo.py --name nl_traffic --from-json sample.json
+    python scripts/traffic_flights_to_cmo.py --name nl_traffic --from-json sample.json
 
 Altitudes from AeroAPI are in hundreds of feet (flight level); converted to
 metres for CMO. Groundspeed is in knots; heading in degrees true.
@@ -29,8 +29,8 @@ import json
 import sys
 from pathlib import Path
 
-from aeroapi import AeroAPIClient, AeroAPIError, latlong_box_query
-from aircraft_type_map import TypeResolver
+from traffic_aeroapi import AeroAPIClient, AeroAPIError, latlong_box_query
+from traffic_aircraft_type_map import TypeResolver
 from cmo_config import aeroapi_key_source_label, resolve_aeroapi_key
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

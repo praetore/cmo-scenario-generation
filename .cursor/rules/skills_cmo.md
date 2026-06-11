@@ -58,9 +58,8 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
 
 DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 vs CWDB).
 
-- **Source vs master:** With `--series` and `--version`, `scripts/db_search.py` uses the matching source `.db3` (via `cmo_config.json` or local `DB/`). Use `CMO_Master.db` (from `scripts/merge_db.py`) only for cross-version exploration (`--master`).
-- **Building master:** `python scripts/merge_db.py` merges source DBs. Limit with `--series`, `--versions`, or `--latest N`.
-- **Weapon verification:** SAM and some facilities may have empty or wrong DBIDs in merged DBs.
+- **Source database:** With `--series` and `--version`, `scripts/db_search.py` uses the matching source `.db3` (via `cmo_config.ini` → game `DB/`, or local repo `DB/`). Always pass the same series/version as your scenario.
+- **Weapon verification:** SAM and some facilities may have empty DBIDs in the database.
   - **Check:** `scripts/db_search.py --weapons [ID] --type DataFacility`
   - **Empty units:** No mounts/magazines in search → unit cannot fire in-game; pick another DBID (e.g. battery/section instead of generic “SAM site”).
   - **Operator country:** Each unit has `OperatorCountry`. Preflight checks that DB operator matches `@nationality` (and loosely matches the Lua `side` for obvious mismatches, e.g. a US hull on a Cuba side).
@@ -76,13 +75,13 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 - **Loadout / weapon config:**
   - **Aircraft:** `LoadoutID` is tied to `AircraftID`. Always confirm with `--loadouts` or `DataAircraftLoadouts`.
   - **Non-air:** Use `--loadouts --type [Type]` for mounts + magazines.
-  - **Search:** `python scripts/db_search.py "UnitName"` and check the `Op` column.
+  - **Search:** `python scripts/db_search.py "UnitName" --series DB3K --version 515` and check the `Op` column.
   - **Known operator IDs:** `2060` NATO, `2061` Netherlands, `2011` Belgium, `2101` United States, `2032` France, `2035` Germany, `2074` Poland, `2079` Russia, `2006` Australia. **Last resort:** `9999` Junkyard, Generic — only when no national row exists; tag with `@operator_last_resort`.
   - **DB lookup workflow:** `python scripts/db_search.py "E-3" --series DB3K --version 515` → read **Operator** (id + name), not just unit name; same name often has 5+ DBIDs. Match operator to scenario intent (`@nationality` / side) before writing the dbid into Lua.
 - **Preflight (mandatory):**
 
   ```bash
-  python scripts/db_search.py --validate-scenario generated/YOUR_SCENARIO.lua --series DB3K --version 515
+  python scripts/validate_scenario.py generated/YOUR_SCENARIO.lua --series DB3K --version 515
   ```
 
   Covers loadout pairs, mission fit, CSG, strike timing/reachability, SEAD timing, nuclear policy, escorts, and more. See `logic_checks_cmo.md` §1 and §4. Exit codes: `0` / `1` / `2`.
@@ -189,7 +188,7 @@ restore_all_spawned_air_assignments(STRIKE_AIR_MISSION)
 print('Strike schedule (hardcoded): TOT=' .. strike_package_tot .. ' Z | TLAM launch=' .. tlam_launch_time .. ' Z')
 ```
 
-**Do not** call `sync_naval_strike_tot`, `sync_air_strike_tot`, or naval `CreateMissionFlightPlan` in scenarios — they clear air ORBAT or add fragile sync. Preflight verifies **reachability** first; only then timed `SetMission` after OOB.
+**Do not** call naval `CreateMissionFlightPlan` in scenarios — it clears air ORBAT. Use `setup_csg_strike_on_air_strike` + `set_naval_strike_schedule` instead. Preflight verifies **reachability** first; only then timed `SetMission` after OOB.
 
 **CMO quirks (general — not scenario-specific):**
 
@@ -205,7 +204,6 @@ Helper messages (see `scenario_bootstrap.lua`):
 
 - `OK: <strike mission> launch=… TOT=… (N CSG hull(s))`
 - `OK: Strike ship gun policy events for … — ScenLoaded + …`
-- **Legacy solo CG:** `setup_solo_tlam_shooter` — `NOTE:` when `GetMission` empty at import until Play.
 
 **Verification:** Message Log at import + **Mission Editor** (all strike assets — air + naval — on one Strike mission, launch/TOT visible, gun WRA blocked on land).
 
@@ -229,8 +227,8 @@ Helper messages (see `scenario_bootstrap.lua`):
 | :--- | :--- |
 | Spawn, CSG, strike/TLAM timing | **`scripts/scenario_bootstrap.lua`** — edit helpers here; scenarios call `cmo.*` |
 | Bootstrap API & recipes | **`skills_cmo.md` §9** + bootstrap file header |
-| Run in CMO | **`python scripts/embed_bootstrap.py generated/<file>.lua`** → `<file>_import.lua` |
-| Preflight | `db_search.py --validate-scenario` merges bootstrap automatically |
+| Run in CMO | **`python scripts/embed_bootstrap.py generated/<file>.lua`** (overwrites file with bootstrap inlined) |
+| Preflight | `validate_scenario.py` merges bootstrap automatically |
 | Raw CMO API one-liners | `cmo_api_reference.md` |
 
 Do **not** copy the full bootstrap into Markdown — that drifts from preflight.
@@ -240,8 +238,8 @@ Do **not** copy the full bootstrap into Markdown — that drifts from preflight.
 ### Workflow
 
 1. Write `generated/<name>.lua` with `cmo.*` calls (requires embed before CMO run).
-2. Preflight: `python scripts/db_search.py --validate-scenario generated/<name>.lua --series DB3K --version 515`
-3. Import: `python scripts/embed_bootstrap.py generated/<name>.lua` → load `generated/<name>_import.lua` in CMO.
+2. Preflight: `python scripts/validate_scenario.py generated/<name>.lua --series DB3K --version 515`
+3. Embed: `python scripts/embed_bootstrap.py generated/<name>.lua` → load the same file in CMO.
 
 Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
@@ -280,14 +278,14 @@ local spawn_air_wing = cmo.spawn_air_wing
 | Spawn | `place_base`, `place_ship`, `place_sub`, `place_sam`, `add_air_unit_checked`, `spawn_air_wing` |
 | Assign | `assign_air_to_mission`, `assign_ship_to_mission`, `refresh_spawned_air_assignments`, `restore_all_spawned_air_assignments`, `resolve_mission_guid` |
 | Strike timing | `set_naval_strike_schedule`, `finalize_strike_air_after_flight_plan`, `verify_spawned_air_assignments`, `add_strike_assign_restore_event` |
-| Strike package / TLAM | `form_csg_group`, **`setup_csg_strike_on_air_strike`** (unify naval strike assets on package mission — preferred), `setup_csg_tlam_on_air_strike`, `configure_strike_ship_weapon_policy`, `add_strike_ship_weapon_policy_event`, `setup_solo_tlam_shooter` (legacy), `finalize_detached_tlam_shooter` / `finalize_csg_tlam` (legacy) |
+| Strike package / TLAM | `form_csg_group`, **`setup_csg_strike_on_air_strike`**, `configure_strike_ship_weapon_policy`, `add_strike_ship_weapon_policy_event` |
 | Nuclear | `configure_nuclear_policy`, `weapon_dbid_is_nuclear` (DB warhead Type 4001 via embed), `strip_nuclear_from_unit` |
 
 Shared mutable state: **`cmo.state`** (`spawned_air_missions`, strike mission names, dates, etc.).
 
 ### Unified strike package order (mandatory)
 
-1. One **Strike** mission as the **strike package** — aircraft and naval TLAM shooters share it when using `setup_csg_strike_on_air_strike` (legacy: separate naval-only Strike).
+1. One **Strike** mission as the **strike package** — aircraft and naval TLAM shooters share it via `setup_csg_strike_on_air_strike`.
 2. **CSG formation:** `form_csg_group(CSG_GROUP, cvn, {ddg, cg, …})` — escorts stay grouped; strike assets are assigned to the package mission in formation.
 3. Spawn strike aircraft, assign targets; `configure_strike_mission_options` **before** spawn.
 4. **Hardcoded schedule block** (after OOB): SEAD/ISR `set_patrol_on_station_schedule` (on-station), strike `set_strike_tot_schedule` (flight plan + wrapper TOT, fatal verify), then `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW → `setup_csg_strike_on_air_strike` → final `set_strike_tot_schedule` wrapper reassert.

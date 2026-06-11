@@ -1,5 +1,4 @@
 # CMO databases and local config
-CMO_Master.db
 cmo_master.db
 cmo_config.ini
 
@@ -11,7 +10,7 @@ DB/
 generated/*
 !generated/.gitkeep
 
-# Luacheck Windows binary (scripts/install_luacheck.py)
+# Luacheck Windows binary (scripts/preflight_luacheck.py)
 tools/luacheck/
 
 # Python

@@ -5,14 +5,14 @@
 -- PURPOSE
 --   Reusable Lua for generated/ scenarios: spawn, mission assign, CSG formation,
 --   synchronized air + TLAM strike timing, nuclear strip. Single source of truth;
---   preflight (db_search.py) merges this file when validating scenarios.
+--   preflight (validate_scenario.py) merges this file when validating scenarios.
 --
 -- WORKFLOW (authors)
 --   1. Write generated/<scenario>.lua using cmo.* (see SETUP below).
---   2. Preflight: python scripts/db_search.py --validate-scenario generated/<scenario>.lua ...
---   3. CMO import: python scripts/embed_bootstrap.py generated/<scenario>.lua
---      → generated/<scenario>_import.lua  (CMO has no dofile/loadfile)
---   4. Load *_import.lua in the scenario editor (or save scenario after run).
+--   2. Preflight: python scripts/validate_scenario.py generated/<scenario>.lua ...
+--   3. CMO: python scripts/embed_bootstrap.py generated/<scenario>.lua
+--      (inlines this file into the scenario — CMO has no dofile/loadfile)
+--   4. Load that same .lua in the scenario editor (or save scenario after run).
 --
 -- SETUP (top of every scenario that uses bootstrap)
 --   local scenario_year = 2026
@@ -29,7 +29,7 @@
 --   })
 --   -- Alias helpers you need: local place_ship = cmo.place_ship  (see REFERENCE)
 --
--- PREFLIGHT ANNOTATIONS (comment lines at top of scenario; parsed by db_search.py)
+-- PREFLIGHT ANNOTATIONS (comment lines at top of scenario; parsed by preflight_parse.py)
 --   -- @scenario_policy nuclear=false
 --   -- @strike_package mission=<AirStrike> profile=standoff date=YYYY/MM/DD time=HH:MM:SS max_spread=15
 --   -- @naval_package mission=<NavalStrike> launch=HH:MM:SS tot=HH:MM:SS minutes_before_strike_tot=N
@@ -73,10 +73,8 @@
 --     set_patrol_on_station_schedule(side, mission, station_dt, opts)  SEAD/ISR: CreateMissionFlightPlan TIMEONTARGET
 --     set_strike_tot_schedule(side, mission, tot_dt, opts)  Strike TOT: flight plan + wrapper TimeOnTargetStation + fatal verify
 --     set_naval_strike_schedule()      unified strike package TOT/launch after ship assign (uses set_strike_tot_schedule)
---     setup_csg_strike_on_air_strike(group, {cvn,ddg,cg,...})  preferred — unify naval strike assets on package mission + launch/TOT + gun policy
---     setup_solo_tlam_shooter(cg)      legacy solo CG — assign → set_naval_strike_schedule → weapon policy (no naval flight plan)
+--     setup_csg_strike_on_air_strike(group, {cvn,ddg,cg,...})  unify naval strike assets on package mission + launch/TOT + gun policy
 --     ungroup_unit(ship, side?)        only if already in a surface group — never on solo ships (group='none' creates a spurious ORBAT group)
---     verify_solo_tlam_shooter(cg)     log OK/WARNING if still in a surface group
 --     finalize_strike_air_after_flight_plan()  updateWPtimes + restore ALL spawned air (never SetMission on strike package)
 --     restore_all_spawned_air_assignments()    re-run after TLAM/naval CreateMissionFlightPlan (clears strike ORBAT)
 --     add_strike_assign_restore_event(opts)     ScenLoaded + Time events re-assign strike ORBAT at Play (after CAP/SEAD launch)
@@ -86,17 +84,8 @@
 --
 --   Strike package + TLAM
 --     form_csg_group(group_name, cvn_lead, {ddg, cg, ...})   CSG formation; setup_csg_strike_on_air_strike unifies naval assets on package mission
---     assign_csg_group_missions(group, lead, patrol_mission, strike_unit, strike_mission, side?)
---       Patrol on LEAD only — never AssignUnitToMission(group_name, patrol).
---     setup_solo_tlam_shooter(cg_unit)                  preferred: CG not in any surface group
 --     configure_strike_ship_weapon_policy(ship)       auto via assign_ship_to_mission on Strike missions
 --     add_strike_ship_weapon_policy_event(ship)     Play-time WRA refresh for strike ships
---     assign_tlam_shooter(cg_unit, group_name?)          thin wrapper → assign_ship_to_mission
---     finalize_detached_tlam_shooter(cvn, cg, {ddgs}, CSG_GROUP, patrol?)  legacy (regroups CVN+DDGs, CG solo)
---     finalize_csg_tlam(cvn, cg, {ddgs}, CSG_GROUP, patrol)  **legacy grouped CG** — ME schedule often empty
---     restore_tlam_shooter_and_schedule(cg, group_name)
---     refresh_csg_patrol(cvn, patrol_mission)
---     verify_csg_patrol(cvn, patrol_mission)
 --
 --   Nuclear policy (@scenario_policy nuclear=false)
 --     configure_nuclear_policy({ allowed=false, tlam_replacement_dbid? })
@@ -107,23 +96,21 @@
 -- RECIPE — unified strike package with naval TLAM (preferred; skills_cmo.md §9)
 --   1. One Strike mission = strike package (Land, OnDeactivateUassign=false); configure_strike_timing air_mission / naval_mission may name the same mission
 --   2. form_csg_group(CSG_GROUP, cvn, {ddg1, ddg2, cg}) — full CSG in formation
---   3. Optional: assign_csg_group_missions(..., patrol on CVN lead only) — never AssignUnitToMission(group_name, patrol)
 --   … air CreateMissionFlightPlan → finalize_strike_air_after_flight_plan() → CVN AEW/CAP/SEAD SetMission → restore strike assign …
 --   7. setup_csg_strike_on_air_strike(CSG_GROUP, {cvn, ddg, cg, …}) — unify naval strike assets; launch+TOT via set_naval_strike_schedule; gun policy per hull
 --   8. restore_all_spawned_air_assignments() + add_strike_assign_restore_event() for Play-time ORBAT
---   Naval: **no** CreateMissionFlightPlan on ship-only strike. Legacy solo CG: setup_solo_tlam_shooter(cg).
+--   Naval: **no** CreateMissionFlightPlan on ship-only strike.
 --
 -- RECIPE — strike package, aircraft only (no TLAM)
---   configure_strike_timing without naval_mission; skip apply_naval / add_tlam_* ;
+--   configure_strike_timing without naval_mission; skip naval strike setup when aircraft-only;
 --   use steps 6–7 only for carrier/land strike package.
 --
 -- INIT LOG (Message Log during Lua import — skills_cmo.md §6)
 --   ERROR:   hard failure (spawn/assign/mission missing)
 --   WARNING: suspicious, no known Play-deferred workaround
---   NOTE:    expected quirk at import (e.g. solo CG + empty GetMission until Play)
+--   NOTE:    expected quirk at import (e.g. empty GetMission until Play)
 --   OK:      verified success, or deferred success with explanation
---   Helpers emit NOTE/OK for empty TLAM schedule after solo assign; scenarios should
---   end with a Strike TOT summary line when tot=='' (see skills_cmo.md §6).
+--   Scenarios should end with a Strike TOT summary line (see skills_cmo.md §6).
 --
 -- PITFALLS
 --   • AssignUnitToMission / SetUnit(mission=): use mission **name**, not guid — guid attempts log
@@ -131,8 +118,7 @@
 --   • ScenEdit_SetUnit({ group = ... }): use a **name string** to join a group. Do **not** set group='none' on ships that were never grouped — CMO creates an ORBAT group literally named "none". Use group='none' only via ungroup_unit() when leaving an existing group.
 --   • CMO cannot dofile external files — use embed_bootstrap.py for import.
 --   • ScenEdit_SetMission on the strike package after aircraft are assigned clears every unit on that mission — configure strike options before spawn_air_wing; package TOT via CreateMissionFlightPlan only.
---   • CG in surface group + TLAM Strike: ME launch/TOT often empty — use setup_solo_tlam_shooter (group='').
---   • AssignUnitToMission on CG clears GetMission starttime/TOT at import — sync after assign via set_naval_strike_schedule.
+--   • Unify naval TLAM via setup_csg_strike_on_air_strike — ships stay in CSG group; set_naval_strike_schedule after assign.
 --   • SEAD = Patrol type SEAD, not Strike; set starttime/TakeOffTime before strike TOT.
 --
 -- See also: .cursor/rules/skills_cmo.md §6–§9, logic_checks_cmo.md §4
@@ -339,21 +325,6 @@ function M._unit_group_label(ship_unit)
     end
     local u = ScenEdit_GetUnit({ guid = ship_unit.guid })
     return M._unit_group_name(u)
-end
-
-function M.verify_solo_tlam_shooter(ship_unit)
-    if not ship_unit or not ship_unit.guid then
-        return false
-    end
-    local grp = M._unit_group_label(ship_unit)
-    if not M._is_real_surface_group_name(grp) then
-        print('OK: ' .. tostring(ship_unit.name) .. ' solo (no surface group)')
-        return true
-    end
-    print('WARNING: ' .. tostring(ship_unit.name) .. ' still in group "' .. grp ..
-        '" — expected solo for TLAM ME schedule')
-    M.ungroup_unit(ship_unit)
-    return false
 end
 
 function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
@@ -753,84 +724,6 @@ function M.set_naval_strike_schedule(side, mission_name, launch_dt, tot_dt)
     })
 end
 
--- Deprecated: scenarios use hardcoded strike_package_tot + set_naval_strike_schedule. Kept for legacy callers.
-function M.sync_air_strike_tot()
-    return
-end
-
-function M.sync_naval_strike_tot()
-    local sched = M.strike_schedule_datetimes()
-    M.set_naval_strike_schedule(M.state.strike_side, M.state.TLAM_STRIKE_MISSION, sched.tlam_launch, sched.tot)
-    return sched.tlam_launch, sched.tot
-end
-
-function M.restore_naval_strike_schedule()
-    return M.sync_naval_strike_tot()
-end
-
-function M._reassert_naval_strike_schedule(side, naval_mission, launch_dt, tot_dt)
-    return M.set_naval_strike_schedule(side, naval_mission, launch_dt, tot_dt)
-end
-
-function M._assign_solo_tlam_shooter(side, ship_unit, mission_name)
-    if not ship_unit or not ship_unit.guid or not mission_name then
-        return false
-    end
-    -- SetUnit(mission=) first — AssignUnitToMission clears starttime/TOT on naval Strike.
-    ScenEdit_SetUnit({ guid = ship_unit.guid, side = side, mission = mission_name })
-    local u = ScenEdit_GetUnit({ guid = ship_unit.guid })
-    if M._unit_mission_label(u) == '' then
-        ScenEdit_AssignUnitToMission(ship_unit.guid, mission_name)
-    end
-    u = ScenEdit_GetUnit({ guid = ship_unit.guid })
-    if M._unit_mission_label(u) == '' then
-        return false
-    end
-    local m = ScenEdit_GetMission(side, mission_name)
-    if m and m.unitlist then
-        for _, ug in ipairs(m.unitlist) do
-            if ug == ship_unit.guid then
-                if M._is_strike_ship_mission(mission_name) then
-                    M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
-                end
-                return true
-            end
-        end
-    end
-    local ok = M._unit_mission_label(u) ~= ''
-    if ok and M._is_strike_ship_mission(mission_name) then
-        M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
-    end
-    return ok
-end
-
-function M._naval_flight_plan_opts()
-    -- Same TOT anchor as air CreateMissionFlightPlan — no TAKEOFFTIME (that becomes ME TakeOffTime, not TOT sync).
-    return {
-        DATEONTARGET = M.state.strike_package_date,
-        TIMEONTARGET = M.state.strike_package_tot,
-    }
-end
-
-function M._run_naval_mission_flight_plan(side, naval_mission)
-    local fp_opts = M._naval_flight_plan_opts()
-    local m = ScenEdit_GetMission(side, naval_mission)
-    if m and m.createFlightPlans then
-        local ok_fp = pcall(function() m:createFlightPlans(fp_opts) end)
-        if ok_fp then
-            pcall(function() m:updateWPtimes() end)
-            M.sync_naval_strike_tot()
-            return
-        end
-    end
-    ScenEdit_CreateMissionFlightPlan(side, naval_mission, fp_opts)
-    m = ScenEdit_GetMission(side, naval_mission)
-    if m then
-        pcall(function() m:updateWPtimes() end)
-    end
-    M.sync_naval_strike_tot()
-end
-
 function M._mission_field_nonempty(value)
     if value == nil then
         return false
@@ -1053,32 +946,6 @@ function M._unit_group_name(unit)
     return tostring(g)
 end
 
-function M.apply_naval_strike_flight_plan(shooter_unit, group_name)
-    if not group_name or group_name == '' then
-        return M.setup_solo_tlam_shooter(shooter_unit)
-    end
-    local side = M.state.strike_side
-    local naval_mission = M.state.TLAM_STRIKE_MISSION
-    local sched = M.strike_schedule_datetimes()
-    if shooter_unit and M._unit_is_in_surface_group(shooter_unit) then
-        M.ungroup_unit(shooter_unit, side)
-    end
-    local shooter_ok = shooter_unit and
-        M.assign_ship_to_mission(side, shooter_unit, naval_mission, group_name) or false
-    if shooter_ok then
-        M.set_naval_strike_schedule(side, naval_mission, sched.tlam_launch, sched.tot)
-    end
-    return shooter_ok
-end
-
-function M.ensure_naval_strike_me_schedule()
-    local sched = M.strike_schedule_datetimes()
-    local ok = M.set_naval_strike_schedule(
-        M.state.strike_side, M.state.TLAM_STRIKE_MISSION, sched.tlam_launch, sched.tot)
-    M._restore_air_after_naval_schedule_mutation()
-    return ok
-end
-
 -- Strike-ship weapon policy (any surface unit on a Strike mission): standoff missiles only;
 -- main gun never on land; surface gun only when threatened (WCS HOLD + WRA self-defence).
 M.WRA_GUN_LAND_BLOCK = { 'none', 'none', 'none', 'none' }
@@ -1206,7 +1073,7 @@ end
 
 function M.configure_naval_strike_doctrine(side)
     side = side or M.state.strike_side or 'United States'
-    local mission = M.state.TLAM_STRIKE_MISSION
+    local mission = M.state.STRIKE_AIR_MISSION or M.state.TLAM_STRIKE_MISSION
     if not mission then
         return false
     end
@@ -1217,10 +1084,6 @@ function M.configure_naval_strike_doctrine(side)
         engage_opportunity_targets = false,
     })
     return true
-end
-
-function M._apply_tlam_shooter_gun_wra(unit_guid, side, gun_dbids)
-    return M._apply_strike_ship_gun_wra(unit_guid, side, gun_dbids)
 end
 
 function M.configure_strike_ship_weapon_policy(unit, opts)
@@ -1253,7 +1116,6 @@ function M.configure_strike_ship_weapon_policy(unit, opts)
     return land_rules, surface_rules
 end
 
-M.configure_tlam_shooter_weapon_policy = M.configure_strike_ship_weapon_policy
 M.disable_strike_guns_on_unit = M.configure_strike_ship_weapon_policy
 
 function M.build_strike_ship_weapon_policy_script(ship_unit)
@@ -1381,8 +1243,6 @@ function M.add_strike_ship_weapon_policy_event(ship_unit, opts)
     return true
 end
 
-M.add_tlam_shooter_weapon_policy_event = M.add_strike_ship_weapon_policy_event
-
 -- Unify naval strike assets on the package Strike mission (in formation). All TLAM-capable hulls may fire; gun policy per hull.
 -- Function name is historical (STRIKE_AIR_MISSION); concept = strike asset unification, not "CSG joins air strike".
 function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
@@ -1400,6 +1260,7 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
         print('ERROR: setup_csg_strike_on_air_strike — STRIKE_AIR_MISSION not configured')
         return false
     end
+    M.configure_naval_strike_doctrine(side)
     local sched = M.strike_schedule_datetimes()
     local ok_count, fail_count = 0, 0
     for _, ship_unit in ipairs(strike_ships) do
@@ -1436,218 +1297,8 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
     return ok_count > 0 and fail_count == 0
 end
 
--- Single CG/hull wrapper — prefer setup_csg_strike_on_air_strike for full CSG TLAM salvo.
-function M.setup_csg_tlam_on_air_strike(ship_unit, group_name)
-    if not ship_unit or not ship_unit.guid then
-        return false
-    end
-    return M.setup_csg_strike_on_air_strike(group_name, { ship_unit })
-end
-
--- CG solo (ungrouped) on package mission — legacy; prefer setup_csg_tlam_on_air_strike when CG is in CSG.
-function M.setup_tlam_on_air_strike(ship_unit)
-    if not ship_unit or not ship_unit.guid then
-        return false
-    end
-    local side = M.state.strike_side or 'United States'
-    local strike_mission = M.state.STRIKE_AIR_MISSION
-    if not strike_mission then
-        print('ERROR: setup_tlam_on_air_strike — STRIKE_AIR_MISSION not configured')
-        return false
-    end
-    local sched = M.strike_schedule_datetimes()
-    if M._unit_is_in_surface_group(ship_unit) then
-        M.ungroup_unit(ship_unit, side)
-    end
-    local ok = M._assign_solo_tlam_shooter(side, ship_unit, strike_mission)
-    if ok then
-        print('TLAM shooter assigned: ' .. tostring(ship_unit.name) .. ' → ' .. strike_mission ..
-            ' (unified strike package — TOT in ME)')
-        M.set_naval_strike_schedule(side, strike_mission, sched.tlam_launch, sched.tot)
-        if sched.tlam_launch then
-            print('OK: ' .. strike_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
-                ' TOT=' .. tostring(sched.tot))
-        else
-            print('OK: ' .. strike_mission .. ' TOT=' .. tostring(sched.tot))
-        end
-    else
-        print('ERROR: TLAM shooter assign failed: ' .. tostring(ship_unit.name))
-    end
-    M.configure_tlam_shooter_weapon_policy(ship_unit)
-    M.verify_tlam_mission_has_shooter(ship_unit)
-    M._restore_air_after_naval_schedule_mutation()
-    M.configure_tlam_shooter_weapon_policy(ship_unit)
-    M.add_tlam_shooter_weapon_policy_event(ship_unit)
-    return ok
-end
-
--- CG 52 solo on separate TLAM Strike (legacy — ME TOT often empty; prefer setup_tlam_on_air_strike).
-function M.setup_solo_tlam_shooter(ship_unit)
-    if not ship_unit or not ship_unit.guid then
-        return false
-    end
-    local side = M.state.strike_side or 'United States'
-    local naval_mission = M.state.TLAM_STRIKE_MISSION
-    local sched = M.strike_schedule_datetimes()
-    M.configure_naval_strike_doctrine(side)
-    if M._unit_is_in_surface_group(ship_unit) then
-        M.ungroup_unit(ship_unit, side)
-    end
-    local ok = M._assign_solo_tlam_shooter(side, ship_unit, naval_mission)
-    if ok then
-        print('TLAM shooter assigned: ' .. tostring(ship_unit.name) .. ' (solo — not in CSG group)')
-        M.set_naval_strike_schedule(side, naval_mission, sched.tlam_launch, sched.tot)
-        if sched.tlam_launch then
-            print('OK: ' .. naval_mission .. ' launch=' .. tostring(sched.tlam_launch) ..
-                ' TOT=' .. tostring(sched.tot))
-        else
-            print('OK: ' .. naval_mission .. ' TOT=' .. tostring(sched.tot) ..
-                ' (CMO auto-launch from range)')
-        end
-    else
-        print('ERROR: TLAM shooter assign failed: ' .. tostring(ship_unit.name))
-    end
-    M.configure_strike_ship_weapon_policy(ship_unit)
-    M.verify_solo_tlam_shooter(ship_unit)
-    M.verify_tlam_mission_has_shooter(ship_unit)
-    M.add_strike_ship_weapon_policy_event(ship_unit)
-    return ok
-end
-
-function M.refresh_csg_patrol(lead_unit, patrol_mission, side)
-    side = side or M.state.strike_side or 'United States'
-    if not lead_unit or not lead_unit.guid or not patrol_mission then
-        return false
-    end
-    if ScenEdit_AssignUnitToMission(lead_unit.guid, patrol_mission) then
-        return true
-    end
-    ScenEdit_SetUnit({ guid = lead_unit.guid, side = side, mission = patrol_mission })
-    return true
-end
-
-function M.verify_csg_patrol(lead_unit, patrol_mission)
-    if not lead_unit or not lead_unit.guid then
-        print('WARNING: CSG patrol verify — no group lead')
-        return false
-    end
-    local u = ScenEdit_GetUnit({ guid = lead_unit.guid })
-    local label = M._unit_mission_label(u)
-    if label ~= '' and string.find(string.lower(label), string.lower(patrol_mission), 1, true) then
-        print('OK: CSG lead ' .. tostring(lead_unit.name) .. ' on patrol ' .. patrol_mission)
-        return true
-    end
-    print('ERROR: CSG lead ' .. tostring(lead_unit.name) .. ' not on ' .. patrol_mission ..
-        ' (mission="' .. label .. '")')
-    return false
-end
-
--- SetMission then assign — inline at init via set_naval_strike_schedule / run_tlam_restore.
 function M._q_lua_str(s)
     return tostring(s):gsub("'", "\\'")
-end
-
-function M.run_tlam_restore(ship_unit, group_name)
-    if not ship_unit or not ship_unit.guid or not M.state.TLAM_STRIKE_MISSION then
-        return false
-    end
-    local side = M.state.strike_side
-    local mission = M.state.TLAM_STRIKE_MISSION
-    if M._is_real_surface_group_name(group_name) and M._unit_is_in_surface_group(ship_unit) then
-        M.ungroup_unit(ship_unit, side)
-    end
-    local sched = M.strike_schedule_datetimes()
-    local ok
-    if group_name and group_name ~= '' then
-        ok = M.assign_ship_to_mission(side, ship_unit, mission, group_name)
-    else
-        ok = M._assign_solo_tlam_shooter(side, ship_unit, mission)
-    end
-    M.set_naval_strike_schedule(side, mission, sched.tlam_launch, sched.tot)
-    M.configure_naval_strike_doctrine(side)
-    M.configure_tlam_shooter_weapon_policy(ship_unit, { side = side })
-    local m = ScenEdit_GetMission(side, mission)
-    if M._mission_field_nonempty(m and m.TimeOnTargetStation) then
-        print('OK: TLAM restore — TOT=' .. tostring(m.TimeOnTargetStation) ..
-            ' starttime=' .. tostring(m.starttime or ''))
-    elseif ok then
-        print('NOTE: TLAM restore — shooter assigned; schedule may stay empty in GetMission until Play (solo CG).')
-    end
-    return ok
-end
-
-function M.restore_tlam_shooter_and_schedule(ship_unit, group_name)
-    return M.run_tlam_restore(ship_unit, group_name)
-end
-
-function M.finalize_csg_tlam(lead_unit, cg_unit, escort_units, group_name, patrol_mission)
-    if not lead_unit or not cg_unit then
-        return false
-    end
-    escort_units = escort_units or {}
-    local members = { cg_unit }
-    for _, u in ipairs(escort_units) do
-        if u and u.guid then
-            table.insert(members, u)
-        end
-    end
-    M.form_csg_group(group_name, lead_unit, members)
-    if patrol_mission and patrol_mission ~= '' then
-        M.refresh_csg_patrol(lead_unit, patrol_mission)
-    end
-    local cg_u = ScenEdit_GetUnit({ guid = cg_unit.guid })
-    local cg_mission = M._unit_mission_label(cg_u)
-    local naval_mission = M.state.TLAM_STRIKE_MISSION
-    local cg_on_tlam = cg_mission ~= '' and
-        string.find(string.lower(cg_mission), string.lower(naval_mission), 1, true)
-    if cg_on_tlam then
-        ScenEdit_SetUnit({ guid = cg_unit.guid, side = M.state.strike_side, group = group_name })
-        M.sync_naval_strike_tot()
-    else
-        M.restore_tlam_shooter_and_schedule(cg_unit, group_name)
-    end
-    if patrol_mission and patrol_mission ~= '' then
-        M.verify_csg_patrol(lead_unit, patrol_mission)
-    end
-    M.verify_tlam_mission_has_shooter(cg_unit)
-    M.sync_naval_strike_tot()
-    local m = ScenEdit_GetMission(M.state.strike_side, naval_mission)
-    if M._mission_field_nonempty(m and m.TimeOnTargetStation) then
-        print('OK: TLAM finalize — TOT=' .. tostring(m.TimeOnTargetStation) ..
-            ' starttime=' .. tostring(m.starttime or ''))
-        return true
-    end
-    print('OK: TLAM finalize — schedule empty in GetMission (grouped CG); sim/ME may differ.')
-    return true
-end
-
--- CG outside CSG group: ME shows TLAM unitlist + launch/TOT; CSG stays CVN + DDGs on patrol.
-function M.finalize_detached_tlam_shooter(lead_unit, cg_unit, escort_units, csg_group_name, patrol_mission)
-    if not lead_unit or not cg_unit then
-        return false
-    end
-    escort_units = escort_units or {}
-    M.form_csg_group(csg_group_name, lead_unit, escort_units)
-    if patrol_mission and patrol_mission ~= '' then
-        M.refresh_csg_patrol(lead_unit, patrol_mission)
-    end
-    M.apply_naval_strike_flight_plan(cg_unit, nil)
-    if patrol_mission and patrol_mission ~= '' then
-        M.verify_csg_patrol(lead_unit, patrol_mission)
-    end
-    M.verify_tlam_mission_has_shooter(cg_unit)
-    local m = ScenEdit_GetMission(M.state.strike_side, M.state.TLAM_STRIKE_MISSION)
-    if M._mission_field_nonempty(m and m.TimeOnTargetStation) then
-        print('OK: TLAM detached finalize — TOT=' .. tostring(m.TimeOnTargetStation) ..
-            ' starttime=' .. tostring(m.starttime or ''))
-        return true
-    end
-    print('WARNING: TLAM detached finalize — schedule still empty in GetMission (check ME manually).')
-    return false
-end
-
-function M.sync_strike_package_tot()
-    M.sync_naval_strike_tot()
 end
 
 function M.finalize_strike_air_after_flight_plan()
@@ -1950,18 +1601,6 @@ function M.add_strike_assign_restore_event(opts)
         #restore_times .. ' Time trigger(s)' ..
         (#time_labels > 0 and (' | times=' .. table.concat(time_labels, ', ')) or ''))
     return true
-end
-
-function M.assign_tlam_shooter(ship_unit, group_name)
-    if not ship_unit or not M.state.TLAM_STRIKE_MISSION then
-        return false
-    end
-    return M.assign_ship_to_mission(
-        M.state.strike_side,
-        ship_unit,
-        M.state.TLAM_STRIKE_MISSION,
-        group_name
-    )
 end
 
 function M.verify_tlam_mission_has_shooter(ship_unit)
@@ -2547,22 +2186,7 @@ function M.strip_nuclear_from_unit(unit, opts)
     return removed, replaced
 end
 
-function M.assign_csg_group_missions(group_name, lead_unit, patrol_mission, strike_unit, strike_mission, side)
-    side = side or M.state.strike_side or 'United States'
-    if lead_unit and lead_unit.guid and patrol_mission then
-        ScenEdit_AssignUnitToMission(lead_unit.guid, patrol_mission)
-        -- Do NOT AssignUnitToMission(group_name, patrol): CMO applies patrol to all group members
-        -- and clears a CG's separate TLAM Strike assignment in the Mission Editor.
-    end
-    if strike_unit and strike_mission then
-        if not M.assign_ship_to_mission(side, strike_unit, strike_mission, group_name) then
-            print('ERROR: TLAM shooter not on mission: ' .. tostring(strike_unit.name or strike_unit.guid) ..
-                ' -> ' .. tostring(strike_mission))
-        end
-    end
-end
-
--- CVN + CG + DDGs in one CMO group; TLAM schedule may be empty at import until Play (see INIT LOG).
+-- CVN + CG + DDGs in one CMO group.
 function M.form_csg_group(group_name, lead, members)
     if not lead or not lead.guid then
         print('ERROR: CSG group without lead')

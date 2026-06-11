@@ -17,12 +17,12 @@ inject neutral civilian air traffic into a scenario — see
 | :--- | :--- | :--- |
 | Key/SSL config | `cmo_config.ini` `[aeroapi]` (gitignored) | `api_key`, optional `verify_ssl`, `ca_bundle` |
 | Key resolver | `scripts/cmo_config.py` | `resolve_aeroapi_key()`, `resolve_aeroapi_verify_ssl()`, `resolve_aeroapi_ca_bundle()`, `aeroapi_key_source_label()` |
-| Client | `scripts/aeroapi.py` | `AeroAPIClient` (stdlib `urllib`); cursor pagination; small CLI |
-| Converter | `scripts/flights_to_cmo.py` | Live flights → self-contained CMO Lua of neutral civilian traffic |
+| Client | `scripts/traffic_aeroapi.py` | `AeroAPIClient` (stdlib `urllib`); cursor pagination; small CLI |
+| Converter | `scripts/traffic_flights_to_cmo.py` | Live flights → self-contained CMO Lua of neutral civilian traffic |
 
 **Key resolution priority:** explicit arg → `AEROAPI_API_KEY` env → `cmo_config.ini`
 `[aeroapi] api_key`. The placeholder `YOUR_AEROAPI_KEY_HERE` counts as *unset*.
-When unset, `flights_to_cmo.py` **skips** generation (exit 0, NOTE logged) — the
+When unset, `traffic_flights_to_cmo.py` **skips** generation (exit 0, NOTE logged) — the
 key is never required for the rest of the pipeline.
 
 **TLS note:** behind a TLS-intercepting proxy (self-signed CA in the chain),
@@ -44,27 +44,27 @@ if client:
 CLI quick checks:
 
 ```bash
-python scripts/aeroapi.py key-status
-python scripts/aeroapi.py count    --query '-latlong "50.7 3.3 53.6 7.3"'
-python scripts/aeroapi.py search   --query '-latlong "50.7 3.3 53.6 7.3"' --max-pages 2
-python scripts/aeroapi.py positions --query '{range alt 50 400}' --unique
-python scripts/aeroapi.py flight    UAL4
+python scripts/traffic_aeroapi.py key-status
+python scripts/traffic_aeroapi.py count    --query '-latlong "50.7 3.3 53.6 7.3"'
+python scripts/traffic_aeroapi.py search   --query '-latlong "50.7 3.3 53.6 7.3"' --max-pages 2
+python scripts/traffic_aeroapi.py positions --query '{range alt 50 400}' --unique
+python scripts/traffic_aeroapi.py flight    UAL4
 ```
 
 ### Converter usage
 
 ```bash
 # Live (box = MINLAT MINLON MAXLAT MAXLON):
-python scripts/flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3" --max-flights 40
+python scripts/traffic_flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3" --max-flights 40
 # Offline from a saved /flights/search response (no key needed):
-python scripts/flights_to_cmo.py --name nl_traffic --from-json sample.json
+python scripts/traffic_flights_to_cmo.py --name nl_traffic --from-json sample.json
 ```
 
 Output `generated/<name>.lua` is **self-contained** (only `ScenEdit_*`, no
 bootstrap/embed): one neutral side, each flight an airborne `Air` unit at its
 last position/heading/speed.
 
-**Aircraft-type mapping (`scripts/aircraft_type_map.py`):** each flight's ICAO
+**Aircraft-type mapping (`scripts/traffic_aircraft_type_map.py`):** each flight's ICAO
 `aircraft_type` (e.g. `B738`, `E190`, `AT72`) is resolved to a real CMO
 `DataAircraft` DBID against the **local** source `.db3` (no API cost), preferring
 civilian operators. Because DBIDs are not stable across DB versions, mapping is
