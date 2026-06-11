@@ -33,12 +33,14 @@ CMO can build scenarios by hand in the editor, but it also exposes a **Lua scrip
 
 1. Describe a scenario (human + AI, using rules in `.cursor/rules/`).
 2. Save Lua under `generated/` on your machine (not in this git repo).
-3. Run **`scripts/validate_scenario.py …`** (must pass or warn).
-4. **CMO import:** inline bootstrap (CMO has no `dofile`):
+   - Bootstrap scenarios: edit `generated/src/<name>_src.lua`; load `generated/<name>.lua` in CMO.
+   - Standalone scripts: single `generated/<name>.lua` (no `_src`, no embed).
+3. Run **`scripts/validate_scenario.py …`** on the **source** file (`generated/src/*_src.lua` when using bootstrap).
+4. **CMO import** (bootstrap scenarios only):
    ```bash
-   python scripts/embed_bootstrap.py generated/YOUR_SCENARIO.lua
+   python scripts/embed_bootstrap.py generated/src/YOUR_SCENARIO_src.lua
    ```
-   Load **`generated/YOUR_SCENARIO.lua`** in the scenario editor (bootstrap is inlined in that file).
+   Load **`generated/YOUR_SCENARIO.lua`** in the scenario editor (never load `generated/src/*_src.lua`).
 5. Copy the scenario `.lua` into CMO’s `Lua` folder if needed and execute from the editor.
 
 ```mermaid
@@ -70,8 +72,8 @@ cmo-scenario-generation/
 └── .cursor/rules/
 ```
 
-**In git:** tooling, rules, docs, config template, `scripts/scenario_bootstrap.lua`, `generated/.gitkeep`.  
-**Not in git:** scenario `.lua` under `generated/`, CMO databases, `cmo_config.ini`.
+**In git:** tooling, rules, docs, config template, `scripts/scenario_bootstrap.lua`, `generated/.gitkeep`, `generated/src/.gitkeep`.
+**Not in git:** any scenario `.lua` under `generated/` or `generated/src/` (CMO load files and `*_src.lua` sources), CMO databases, `cmo_config.ini`.
 
 ---
 

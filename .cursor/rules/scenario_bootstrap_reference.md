@@ -1,0 +1,163 @@
+# `scenario_bootstrap.lua` — helper reference
+
+Implementation: **`scripts/scenario_bootstrap.lua`**. Scenarios call helpers as **`cmo.*`** after embed (`cmo = M`).
+
+**Authoring workflow**
+
+1. Write **`generated/src/<scenario>_src.lua`** using `cmo.*` (see setup below).
+2. Preflight: `python scripts/validate_scenario.py generated/src/<scenario>_src.lua ...`
+3. Build CMO file: `python scripts/embed_bootstrap.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**
+4. Load **`generated/<scenario>.lua`** in CMO (never load `*_src.lua`).
+
+See also: **`skills_cmo.md` §6–§9**, **`logic_checks_cmo.md` §4**.
+
+---
+
+## Setup (top of every bootstrap scenario)
+
+```lua
+local scenario_year = 2026
+local strike_package_date = '2026/06/01'
+local strike_package_tot = '06:30:00'
+local tlam_launch_time = '05:54:00'
+local db_series = (scenario_year > 1980) and 'DB3K' or 'CWDB'
+if not cmo.assert_db_series(scenario_year, 'DB3K') then return end
+cmo.configure_strike_timing({
+    date = strike_package_date, tot = strike_package_tot,
+    tlam_launch = tlam_launch_time,
+    air_mission = 'My Air Strike', naval_mission = 'My TLAM Salvo',
+    side = 'United States',
+})
+-- Alias helpers you use: local place_ship = cmo.place_ship
+```
+
+## Preflight annotations (parsed from scenario comment lines)
+
+| Tag | Example |
+| :--- | :--- |
+| `@scenario_policy` | `nuclear=false` |
+| `@strike_package` | `mission=... date=YYYY/MM/DD time=HH:MM:SS max_spread=15` |
+| `@naval_package` | `mission=... launch=HH:MM:SS tot=HH:MM:SS minutes_before_strike_tot=N` |
+| `@sead_package` | `missions=... takeoff=HH:MM:SS minutes_before_strike_tot=N` |
+| `@strike_wave` | `id=tlam role=naval_strike offset=0 mission=...` |
+
+## Date/time formats (do not mix)
+
+| Use | Format |
+| :--- | :--- |
+| `ScenEdit_SetTime`, `ScenEdit_SetMission` | `YYYY.MM.DD HH:MM:SS` — use `cmo.mission_schedule_datetime` |
+| `CreateMissionFlightPlan` `DATEONTARGET` | `YYYY/MM/DD` |
+| Launch/TOT inside helpers | Use `cmo.*` schedule helpers (CMO upvalue pitfall if relying on outer locals) |
+
+## `cmo.state` (shared mutable state)
+
+`configure_strike_timing` and scenario init fill: `BASE_FACILITY_DBID`, `spawned_air_missions`, `mission_guid_cache`, `strike_side`, `strike_package_date`, `strike_package_tot`, `tlam_launch_time`, `STRIKE_AIR_MISSION`, `TLAM_STRIKE_MISSION`, `db_series`, `nuclear_weapons_allowed`, `conventional_tlam_dbid`.
+
+---
+
+## Function reference (all on `cmo` after embed)
+
+### Setup
+
+| Function | Purpose |
+| :--- | :--- |
+| `configure_strike_timing(cfg)` | `date`, `tot`, `tlam_launch`, `air_mission`, `naval_mission`, `side` |
+| `assert_db_series(year, expected)` | e.g. `assert_db_series(2026, 'DB3K')` |
+| `mission_schedule_date('2026/06/01')` | → `'2026.06.01'` |
+| `mission_schedule_datetime(date, '06:30:00')` | CMO datetime string |
+| `minutes_from_hms` / `hms_from_minutes` / `hms_subtract_minutes` | Clock math for ISR→SEAD sequencing |
+| `add_mission_schedule_restore_event(opts)` | ScenLoaded + Time — re-apply starttime/TakeOffTime at Play |
+
+### Spawn
+
+Nil + `ERROR` print on failure; `place_ship` / `place_sub` check elevation.
+
+| Function | Notes |
+| :--- | :--- |
+| `place_base(side, name, lat, lon)` | Uses `state.BASE_FACILITY_DBID` |
+| `place_ship`, `place_sub`, `place_sam` | Land/water checks via `World_GetElevation` |
+| `add_air_unit_checked(...)` | Requires `loadoutid` |
+| `spawn_air_wing(...)` | Batch spawn + assign |
+
+### Mission assign
+
+| Function | Notes |
+| :--- | :--- |
+| `assign_air_to_mission(side, guid, name, mission, strike_escort?)` | |
+| `assign_ship_to_mission(side, ship, mission, group_name?)` | `group_name` only for legacy grouped fallback |
+| `refresh_spawned_air_assignments(mission_filter?)` | Re-assign tracked spawns |
+| `restore_all_spawned_air_assignments(mission_filter?)` | After TLAM/naval schedule mutations |
+| `resolve_mission_guid(side, mission_name)` | |
+
+### Strike timing
+
+Use these in scenarios — do not reimplement schedule logic ad hoc.
+
+| Function | Purpose |
+| :--- | :--- |
+| `strike_schedule_datetimes()` | `{ tot, tlam_launch }` from `cmo.state` + scenario locals |
+| `set_patrol_on_station_schedule(...)` | SEAD/ISR: `CreateMissionFlightPlan` TIMEONTARGET |
+| `set_strike_tot_schedule(...)` | Strike TOT: flight plan + wrapper + fatal verify |
+| `set_naval_strike_schedule(...)` | Unified package launch/TOT after ship assign |
+| `setup_csg_strike_on_air_strike(group, {cvn, ddg, cg, ...})` | Naval assets on package mission + gun policy |
+| `ungroup_unit(ship, side?)` | Only when leaving an existing group — never `group='none'` on solo ships |
+| `finalize_strike_air_after_flight_plan()` | `updateWPtimes` + restore all spawned air |
+| `add_strike_assign_restore_event(opts)` | Play-time ORBAT restore |
+| `verify_mission_schedule(...)` | `GetMission` check; `error()` on mismatch unless `opts.fatal=false` |
+| `verify_spawned_air_assignments(mission?)` | WARNING if aircraft unassigned |
+| `configure_strike_mission_options(side, mission, opts)` | **Before** `spawn_air_wing` (`SetMission` clears assignments) |
+
+### Strike package + TLAM
+
+| Function | Purpose |
+| :--- | :--- |
+| `form_csg_group(group_name, cvn_lead, {ddg, cg, ...})` | CSG formation |
+| `configure_strike_ship_weapon_policy(unit, opts)` | Auto via strike-ship assign |
+| `add_strike_ship_weapon_policy_event(ship, opts)` | Play-time WRA refresh |
+
+### Nuclear policy (`@scenario_policy nuclear=false`)
+
+| Function | Purpose |
+| :--- | :--- |
+| `configure_nuclear_policy({ allowed=false, ... })` | Side doctrine + strip policy |
+| `weapon_dbid_is_nuclear(dbid)` / `weapon_dbid_is_nuclear_cruise(dbid)` | DB sets injected at embed |
+| `weapon_name_is_nuclear(name)` | Fallback when dbid unknown |
+| `conventional_tlam_dbid()` / `strip_nuclear_from_unit(unit, opts?)` | After `place_ship` on CSG |
+
+---
+
+## Recipes
+
+### Unified strike package with naval TLAM (preferred)
+
+1. One **Strike** mission = strike package (`OnDeactivateUassign=false`); `configure_strike_timing` may use the same name for air and naval.
+2. `form_csg_group(CSG_GROUP, cvn, {ddg1, ddg2, cg})`.
+3. Configure strike options **before** spawn; assign targets.
+4. Schedule block: SEAD/ISR on-station → strike TOT → `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW → `setup_csg_strike_on_air_strike` → `restore_all_spawned_air_assignments` → `add_strike_assign_restore_event`.
+5. Naval: **no** `CreateMissionFlightPlan` on ship-only strike.
+
+### Aircraft-only strike package
+
+`configure_strike_timing` without `naval_mission`; skip naval TLAM steps.
+
+---
+
+## Init log prefixes (`skills_cmo.md` §6)
+
+| Prefix | Meaning |
+| :--- | :--- |
+| `ERROR:` | Hard failure |
+| `WARNING:` | Suspicious; no known Play workaround |
+| `NOTE:` | Expected import quirk |
+| `OK:` | Verified success |
+
+End scenarios with a Strike TOT summary line when applicable.
+
+## Pitfalls
+
+- **Mission names, not guids** for `AssignUnitToMission` / `SetUnit(mission=)`.
+- **Groups:** use a name string to join; do not set `group='none'` on ships never grouped (CMO creates a group literally named `"none"`). Use `ungroup_unit()` to leave a group.
+- **No external Lua:** use `embed_bootstrap.py` (CMO has no `dofile`).
+- **`SetMission` on strike package after aircraft assigned** clears the package — configure options before spawn; TOT via `CreateMissionFlightPlan`.
+- **Naval TLAM:** `setup_csg_strike_on_air_strike` keeps ships in CSG; `set_naval_strike_schedule` after assign.
+- **SEAD** = Patrol type `SEAD`, not Strike; set `starttime`/`TakeOffTime` before strike TOT.

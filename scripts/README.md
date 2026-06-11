@@ -10,13 +10,15 @@ Run from the repository root.
 |--------|--------|
 | `db_search.py` | DB lookup — search units, `--loadouts`, `--weapons` |
 | `validate_scenario.py` | Preflight — validate scenario Lua before CMO import |
-| `embed_bootstrap.py` | Packaging — inline bootstrap into the scenario file (in place) |
+| `embed_bootstrap.py` | Packaging — build CMO load file from `*_src.lua` (inline bootstrap + tree-shake) |
 
 ```bash
 python scripts/db_search.py "F-35C" --series DB3K --version 515
-python scripts/validate_scenario.py generated/YOUR_SCENARIO.lua --series DB3K --version 515
-python scripts/embed_bootstrap.py generated/YOUR_SCENARIO.lua
+python scripts/validate_scenario.py generated/src/YOUR_SCENARIO_src.lua --series DB3K --version 515
+python scripts/embed_bootstrap.py generated/src/YOUR_SCENARIO_src.lua
 ```
+
+`embed_bootstrap.py` reads `generated/src/<name>_src.lua` and writes `generated/<name>.lua` for CMO. Standalone scenarios skip embed and load `generated/<name>.lua` directly.
 
 `db_search.py --validate-scenario` still works but is deprecated; use `validate_scenario.py`.
 
@@ -46,8 +48,9 @@ python scripts/embed_bootstrap.py generated/YOUR_SCENARIO.lua
 
 | Module | Role |
 |--------|------|
-| `embed_bootstrap.py` | Merge `scenario_bootstrap.lua` into scenario for CMO |
-| `scenario_bootstrap.lua` | Shared CMO Lua helpers — API docs in file header; see `skills_cmo.md` §8 |
+| `embed_bootstrap.py` | Build `generated/<name>.lua` from `generated/src/<name>_src.lua` for CMO |
+| `scenario_bootstrap.lua` | Shared CMO Lua helpers (implementation) |
+| `.cursor/rules/scenario_bootstrap_reference.md` | Bootstrap API, recipes, pitfalls (authors/agents) |
 
 ### Traffic — optional (`traffic_*`)
 

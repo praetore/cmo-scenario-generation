@@ -4,7 +4,14 @@ Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. U
 
 **Language:** All project documentation, source comments, and user-facing strings (print/log messages, generated Lua output) must be written in **English**. This includes `.cursor/rules/`, scripts, and scenario templates. Do not add Dutch or other non-English prose.
 
-**Output path:** Write scenario scripts to `generated/<scenario_name>.lua`. The folder is in git (via `.gitkeep`); `*.lua` inside it are gitignored locally.
+**Output path:** Bootstrap scenarios use two local files under `generated/` (all `*.lua` gitignored — only `.gitkeep` placeholders are tracked):
+
+| File | Purpose |
+| :--- | :--- |
+| `generated/src/<name>_src.lua` | **Source** — edit this; preflight here; **do not load in CMO** |
+| `generated/<name>.lua` | **CMO load file** — built by `embed_bootstrap.py` (bootstrap inlined + tree-shaked) |
+
+Standalone scenarios (no `cmo.*` helpers) remain a single `generated/<name>.lua` loaded directly in CMO.
 
 ## 1. Core sources
 
@@ -12,7 +19,7 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
 
 - **`.cursor/rules/cmo_api_reference.md`** — **Required** technical reference. Current functions, wrappers, and data types. If a function is not listed here, treat it as deprecated and do not use it.
 - **`.cursor/rules/logic_checks_cmo.md`** — Conceptual “rules of the game.” Use for scenario logic validation (fuel, sensors, doctrine, CSG, strike timing) instead of guessing from the PDF manual.
-- **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). Full API reference in the file header (lines 1–100). Generated scenarios live in `generated/` (gitignored locally).
+- **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). API reference: **`.cursor/rules/scenario_bootstrap_reference.md`**. Scenarios live under `generated/` (gitignored locally).
 
 ### Reference PDFs (local, gitignored)
 
@@ -226,20 +233,20 @@ Helper messages (see `scenario_bootstrap.lua`):
 | Need | Where |
 | :--- | :--- |
 | Spawn, CSG, strike/TLAM timing | **`scripts/scenario_bootstrap.lua`** — edit helpers here; scenarios call `cmo.*` |
-| Bootstrap API & recipes | **`skills_cmo.md` §9** + bootstrap file header |
-| Run in CMO | **`python scripts/embed_bootstrap.py generated/<file>.lua`** (overwrites file with bootstrap inlined) |
-| Preflight | `validate_scenario.py` merges bootstrap automatically |
+| Bootstrap API & recipes | **`scenario_bootstrap_reference.md`** + **`skills_cmo.md` §9** |
+| Run in CMO | **`python scripts/embed_bootstrap.py generated/src/<file>_src.lua`** → load **`generated/<file>.lua`** |
+| Preflight | `validate_scenario.py` on **`generated/src/<file>_src.lua`** (merges bootstrap Lua automatically) |
 | Raw CMO API one-liners | `cmo_api_reference.md` |
 
-Do **not** copy the full bootstrap into Markdown — that drifts from preflight.
+Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **documentation** is in `scenario_bootstrap_reference.md` (not inlined into CMO load files).
 
 ## 9. `scenario_bootstrap.lua` — usage for agents
 
 ### Workflow
 
-1. Write `generated/<name>.lua` with `cmo.*` calls (requires embed before CMO run).
-2. Preflight: `python scripts/validate_scenario.py generated/<name>.lua --series DB3K --version 515`
-3. Embed: `python scripts/embed_bootstrap.py generated/<name>.lua` → load the same file in CMO.
+1. Write `generated/src/<name>_src.lua` with `cmo.*` calls (source only — not for CMO load).
+2. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
+3. Embed: `python scripts/embed_bootstrap.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
 
 Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
@@ -297,4 +304,4 @@ Shared mutable state: **`cmo.state`** (`spawned_air_missions`, strike mission na
 - `ScenEdit_SetMission` / `SetTime`: `YYYY.MM.DD HH:MM:SS` via `cmo.mission_schedule_datetime`.
 - `CreateMissionFlightPlan`: `DATEONTARGET = 'YYYY/MM/DD'`, `TIMEONTARGET = 'HH:MM:SS'`.
 
-Details and pitfalls: **`scripts/scenario_bootstrap.lua`** header and **`logic_checks_cmo.md`** §4.
+Details and pitfalls: **`scenario_bootstrap_reference.md`**, **`logic_checks_cmo.md`** §4.

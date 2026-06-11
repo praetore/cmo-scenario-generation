@@ -6,9 +6,11 @@ cmo_config.ini
 DB/*
 !DB/README.md
 
-# Scenario Lua output (local only — not published in this repository)
-generated/*
+# Scenario Lua (local only — not in git: load files, *_src.lua, json, etc.)
+generated/**
 !generated/.gitkeep
+!generated/src/
+!generated/src/.gitkeep
 
 # Luacheck Windows binary (scripts/preflight_luacheck.py)
 tools/luacheck/
