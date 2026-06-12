@@ -112,6 +112,25 @@ Nil + `ERROR` print on failure; `place_ship` / `place_sub` check elevation.
 | `add_air_unit_checked(...)` | Requires `loadoutid` |
 | `spawn_air_wing(...)` | Batch spawn + assign |
 
+### Civilian air traffic (§11 — no aimless loiter)
+
+Register the engagement box once, add 1–3 same-side airports, then one call per airliner.
+
+| Function | Notes |
+| :--- | :--- |
+| `configure_civilian_traffic({ theater = { lat_min, lat_max, lon_min, lon_max } })` | Theater bounds for exit courses |
+| `register_civilian_airport(side, name, lat, lon)` | Civilian-side airfield + RTB target |
+| `add_civilian_airliner(side, name, dbid, loadoutid, lat, lon, alt_m, heading, speed_kts, opts?)` | **auto**: straight exit course (fuel-capped); **land**: lead-in + gradual approach (no RTB snap); **transit**: force theater exit |
+
+```lua
+cmo.configure_civilian_traffic({
+    theater = { lat_min = 17, lat_max = 26, lon_min = 62, lon_max = 74 },
+})
+cmo.register_civilian_airport('Civilian Air Traffic', 'Karachi Jinnah Intl', 24.90, 67.16)
+cmo.add_civilian_airliner('Civilian Air Traffic', 'EK512 (A6-ENU)', 3977, 19921,
+    22.10, 68.40, 11582, 120, 470)
+```
+
 ### Mission assign
 
 | Function | Notes |

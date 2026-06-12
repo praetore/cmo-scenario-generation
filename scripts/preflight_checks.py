@@ -1893,7 +1893,19 @@ def _validate_civilian_flight_paths(content):
     has_civ_air = any(
         block_is_civ_air(m.group(1)) for m in _ADDUNIT_BLOCK_RE.finditer(content)
     )
+    uses_civilian_helper = re.search(
+        r"\b(?:cmo\.)?add_civilian_airliner\s*\(", content
+    ) is not None
+    if not has_civ_air and not uses_civilian_helper:
+        return errors, warnings, ok
     if not has_civ_air:
+        has_civ_air = uses_civilian_helper
+
+    if uses_civilian_helper:
+        ok.append(
+            "OK: Civilian flight paths — add_civilian_airliner sets theater exit course or RTB "
+            "(logic_checks_cmo.md §11)."
+        )
         return errors, warnings, ok
 
     has_course = re.search(r"\bcourse\s*=", content) is not None

@@ -18,6 +18,8 @@ M.state = {
     scenario_year = nil,
     nuclear_weapons_allowed = false,
     conventional_tlam_dbid = nil,
+    civilian_theater = nil,
+    civilian_airports = {},
 }
 
 function M.register_strike_mission(mission_name)
@@ -2079,6 +2081,243 @@ function M.form_csg_group(group_name, lead, members)
             transpose = true,
         }
     end
+end
+
+-- Civilian airliners: exit the engagement box on a plotted course, or RTB and land.
+-- Avoids aimless loiter/circles in the play area (logic_checks_cmo.md §11).
+M.CIVILIAN_ENDURANCE_H = {
+    [3977] = 20.0,  -- Boeing 777-200
+    [3970] = 7.0,   -- Boeing 737-800
+    [32] = 18.0,    -- Airbus A.340-500
+    [604] = 16.0,   -- Boeing 747-200B
+    [2591] = 4.5,   -- ATR-72-500
+}
+
+function M._transit_waypoint_nm(lat, lon, heading_deg, distance_nm)
+    local h = math.rad(heading_deg)
+    local dlat = math.cos(h) * distance_nm / 60.0
+    local dlon = math.sin(h) * distance_nm / (60.0 * math.max(0.1, math.cos(math.rad(lat))))
+    return lat + dlat, lon + dlon
+end
+
+function M._point_outside_theater(lat, lon, theater)
+    return lat < theater.lat_min or lat > theater.lat_max
+        or lon < theater.lon_min or lon > theater.lon_max
+end
+
+function M._theater_exit_distance_nm(lat, lon, heading, theater, leg_nm)
+    leg_nm = leg_nm or 150
+    local clat, clon = lat, lon
+    local total = 0
+    for _ = 1, 50 do
+        clat, clon = M._transit_waypoint_nm(clat, clon, heading, leg_nm)
+        total = total + leg_nm
+        if M._point_outside_theater(clat, clon, theater) then
+            return total
+        end
+    end
+    return total
+end
+
+function M._theater_exit_course(lat, lon, heading, theater, leg_nm)
+    leg_nm = leg_nm or 150
+    local course = {}
+    local clat, clon = lat, lon
+    for _ = 1, 50 do
+        clat, clon = M._transit_waypoint_nm(clat, clon, heading, leg_nm)
+        table.insert(course, { latitude = clat, longitude = clon })
+        if M._point_outside_theater(clat, clon, theater) then
+            clat, clon = M._transit_waypoint_nm(clat, clon, heading, leg_nm)
+            table.insert(course, { latitude = clat, longitude = clon })
+            break
+        end
+    end
+    return course
+end
+
+function M._bearing_deg(lat1, lon1, lat2, lon2)
+    local lat1r, lat2r = math.rad(lat1), math.rad(lat2)
+    local dlon = math.rad(lon2 - lon1)
+    local y = math.sin(dlon) * math.cos(lat2r)
+    local x = math.cos(lat1r) * math.sin(lat2r) - math.sin(lat1r) * math.cos(lat2r) * math.cos(dlon)
+    return (math.deg(math.atan2(y, x)) + 360) % 360
+end
+
+function M._heading_delta(from_deg, to_deg)
+    return math.abs((to_deg - from_deg + 180) % 360 - 180)
+end
+
+function M._heading_course_nm(lat, lon, heading, distance_nm, leg_nm)
+    leg_nm = leg_nm or 150
+    if distance_nm <= 0 then
+        return {}
+    end
+    local num_legs = math.max(1, math.ceil(distance_nm / leg_nm))
+    local step = distance_nm / num_legs
+    local course = {}
+    local clat, clon = lat, lon
+    for _ = 1, num_legs do
+        clat, clon = M._transit_waypoint_nm(clat, clon, heading, step)
+        table.insert(course, { latitude = clat, longitude = clon })
+    end
+    return course
+end
+
+function M._transit_course_capped(lat, lon, heading, theater, leg_nm, speed_kts, dbid)
+    local exit_nm = M._theater_exit_distance_nm(lat, lon, heading, theater, leg_nm)
+    local endurance_nm = speed_kts * M._civilian_endurance_hours(dbid)
+    if exit_nm <= endurance_nm then
+        return M._theater_exit_course(lat, lon, heading, theater, leg_nm)
+    end
+    return M._heading_course_nm(lat, lon, heading, endurance_nm, leg_nm)
+end
+
+function M._course_approach_airport(lat, lon, heading, dest_lat, dest_lon, leg_nm, lead_nm)
+    leg_nm = leg_nm or 150
+    lead_nm = lead_nm or 80
+    local course = {}
+    local clat, clon = lat, lon
+    local lead_legs = math.max(1, math.ceil(lead_nm / leg_nm))
+    local lead_step = lead_nm / lead_legs
+    for _ = 1, lead_legs do
+        clat, clon = M._transit_waypoint_nm(clat, clon, heading, lead_step)
+        table.insert(course, { latitude = clat, longitude = clon })
+    end
+    local current_hdg = heading
+    local target_bearing = M._bearing_deg(clat, clon, dest_lat, dest_lon)
+    local turn_step = 15
+    for _ = 1, 24 do
+        local delta = M._heading_delta(current_hdg, target_bearing)
+        if delta <= 5 then
+            break
+        end
+        local step = math.min(turn_step, delta)
+        if ((target_bearing - current_hdg + 360) % 360) > 180 then
+            step = -step
+        end
+        current_hdg = (current_hdg + step + 360) % 360
+        clat, clon = M._transit_waypoint_nm(clat, clon, current_hdg, leg_nm)
+        table.insert(course, { latitude = clat, longitude = clon })
+    end
+    table.insert(course, { latitude = dest_lat, longitude = dest_lon })
+    return course
+end
+
+function M._civilian_airport_by_guid(guid)
+    for _, ap in ipairs(M.state.civilian_airports or {}) do
+        if ap.guid == guid then
+            return ap
+        end
+    end
+    return nil
+end
+
+function M._airport_best_aligned(lat, lon, heading)
+    local airports = M.state.civilian_airports or {}
+    local best, best_delta = nil, math.huge
+    for _, ap in ipairs(airports) do
+        local brg = M._bearing_deg(lat, lon, ap.lat, ap.lon)
+        local delta = M._heading_delta(heading, brg)
+        if delta < best_delta then
+            best, best_delta = ap, delta
+        end
+    end
+    return best
+end
+
+function M._set_unit_max_fuel(guid)
+    local u = ScenEdit_GetUnit({ guid = guid })
+    if not u or not u.fuel then
+        return
+    end
+    local fuel_updates = {}
+    for _, f in pairs(u.fuel) do
+        if f.max and f.max > 0 then
+            table.insert(fuel_updates, { f.name or f.type, f.max })
+        end
+    end
+    if #fuel_updates > 0 then
+        ScenEdit_SetUnit({ guid = guid, fuel = fuel_updates })
+    end
+end
+
+function M._civilian_endurance_hours(dbid)
+    return M.CIVILIAN_ENDURANCE_H[dbid] or 8.0
+end
+
+function M._nearest_civilian_airport(lat, lon)
+    local airports = M.state.civilian_airports or {}
+    local best, best_d2 = nil, math.huge
+    for _, ap in ipairs(airports) do
+        local dlat = lat - ap.lat
+        local dlon = (lon - ap.lon) * math.cos(math.rad(lat))
+        local d2 = dlat * dlat + dlon * dlon
+        if d2 < best_d2 then
+            best, best_d2 = ap, d2
+        end
+    end
+    return best
+end
+
+function M.configure_civilian_traffic(opts)
+    opts = opts or {}
+    if opts.theater then
+        M.state.civilian_theater = opts.theater
+    end
+end
+
+function M.register_civilian_airport(side, name, lat, lon)
+    local base = M.place_base(side, name, lat, lon)
+    if base then
+        table.insert(M.state.civilian_airports, {
+            guid = base.guid, lat = lat, lon = lon, name = name,
+        })
+    end
+    return base
+end
+
+function M.add_civilian_airliner(side, unitname, dbid, loadoutid, lat, lon, alt_m, heading, speed_kts, opts)
+    opts = opts or {}
+    local theater = opts.theater or M.state.civilian_theater
+    if not theater then
+        M._abort_scenario_generation('add_civilian_airliner: set theater via configure_civilian_traffic or opts.theater')
+    end
+    local leg_nm = opts.leg_nm or 150
+    local u = ScenEdit_AddUnit({
+        type = 'Air', side = side, unitname = unitname, dbid = dbid,
+        loadoutid = loadoutid, latitude = lat, longitude = lon,
+        altitude = alt_m, heading = heading,
+    })
+    if not u or not u.guid then
+        print('ERROR: could not place civilian airliner: ' .. unitname)
+        return nil
+    end
+    M._set_unit_max_fuel(u.guid)
+
+    local mode = opts.mode or 'auto'
+    local set = { guid = u.guid, heading = heading, speed = speed_kts }
+    local land_base = opts.base_guid
+
+    if mode == 'land' or land_base then
+        local ap = (land_base and M._civilian_airport_by_guid(land_base))
+            or M._airport_best_aligned(lat, lon, heading)
+            or M._nearest_civilian_airport(lat, lon)
+        if not ap then
+            print('ERROR: no civilian airport for landing approach: ' .. unitname)
+            return u
+        end
+        set.course = opts.course or M._course_approach_airport(
+            lat, lon, heading, ap.lat, ap.lon, leg_nm, opts.lead_nm)
+        set.base = ap.guid
+    elseif mode == 'transit' then
+        set.course = opts.course or M._theater_exit_course(lat, lon, heading, theater, leg_nm)
+    else
+        set.course = opts.course or M._transit_course_capped(
+            lat, lon, heading, theater, leg_nm, speed_kts, dbid)
+    end
+
+    ScenEdit_SetUnit(set)
+    return u
 end
 
 function M.assert_db_series(scenario_year, expected)

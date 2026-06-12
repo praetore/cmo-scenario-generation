@@ -133,12 +133,30 @@ def _transitive_needed(roots: set[str], functions: dict[str, str]) -> set[str]:
     return needed
 
 
+M_CONST_REF = re.compile(r"\bM\.([A-Z][A-Z0-9_]+)\b")
+
+# DB-filled tables required whenever nuclear stripping helpers are kept.
+_NUCLEAR_STRIP_FUNCTIONS = frozenset(
+    {
+        "strip_nuclear_from_unit",
+        "_strip_nuclear_from_mount_stores",
+        "_weapon_entry_is_nuclear",
+        "_weapon_entry_is_nuclear_cruise",
+        "weapon_dbid_is_nuclear",
+        "weapon_dbid_is_nuclear_cruise",
+    }
+)
+_NUCLEAR_STRIP_CONSTANTS = frozenset({"NUCLEAR_WEAPON_DBIDS", "NUCLEAR_CRUISE_DBIDS"})
+
+
 def _needed_constants(needed_functions: set[str], functions: dict[str, str]) -> set[str]:
     consts: set[str] = set()
     for name in needed_functions:
         body = functions.get(name, "")
-        for m in CONST_M.finditer(body):
+        for m in M_CONST_REF.finditer(body):
             consts.add(m.group(1))
+    if needed_functions & _NUCLEAR_STRIP_FUNCTIONS:
+        consts |= _NUCLEAR_STRIP_CONSTANTS
     return consts
 
 

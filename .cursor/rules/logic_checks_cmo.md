@@ -184,10 +184,11 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - *Check*: Is civil shipping or air traffic present to complicate target identification?
 - **Identification**: Ensure neutral units are not marked hostile by mistake (WCS Tight/Hold).
 - **Realistic flight paths (no aimless loiter) — mandatory**: A civilian air unit created with only `heading`/`speed` and **no plotted course** flies straight and then loiters/circles aimlessly at the last point — unrealistic and a distraction. Every civilian-side air unit must be one of:
-  - *Transit (majority)*: a plotted `course` — a table of `{latitude=, longitude=}` waypoints set via `ScenEdit_SetUnit({guid=…, course={…}})` — whose **final waypoint lies outside the scenario area**, so the aircraft flies through and exits cleanly instead of circling.
-  - *Landing (small minority)*: assigned a **same-side** civilian airfield (`base = <airport guid>`) with `rtb = true`, so CMO flies the approach and lands. RTB requires the airfield to be on the **same side** as the airliner — add 1–2 civilian airfields for the landers.
+  - *Transit (majority)*: a plotted `course` — waypoints via `ScenEdit_SetUnit({guid=…, course={…}})` — whose **final waypoint lies outside the engagement theater**, so the aircraft exits the play area instead of circling over the fight.
+  - *Landing (minority)*: assigned a **same-side** civilian airfield (`base = <airport guid>`) with `rtb = true`, so CMO flies the approach and lands.
+  - *Bootstrap (preferred)*: `cmo.add_civilian_airliner(...)` — **auto** flies straight out of the theater (no instant RTB turns); **land** uses a lead-in on current heading then a gradual approach course (no `rtb=true` snap turn). Pick `base_guid` on the same general heading when forcing a lander.
   - *Check (proportion)*: Only a **small portion** of civilian flights should land inside the scenario area; **most** are overflights that exit. Do not make all (or nearly all) civilian flights land.
-  - *Preflight*: `scripts/validate_scenario.py` warns when a civilian side has air traffic but **no** plotted `course` and **no** `base`+`rtb` (aimless-loiter antipattern), and when civilian airfields are present but no flight is set to transit through.
+  - *Preflight*: `scripts/validate_scenario.py` warns when a civilian side has air traffic but **no** plotted `course`, **no** `base`+`rtb`, and **no** `add_civilian_airliner` helper calls.
 
 ## 12. Terrain & Environment (Land Operations)
 - **Line of Sight (LOS)**: Mountains and buildings block land radars and weapons.
