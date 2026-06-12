@@ -4,7 +4,7 @@
 #   python -m pip install -r requirements.txt
 #
 # global-land-mask powers the preflight land/water placement check in
-# scripts/scenario_checks.py (_validate_unit_geo_placement). It ships a
+# scripts/preflight_checks.py (_validate_unit_geo_placement). It ships a
 # NOAA-derived ~1 km land/ocean mask and pulls in numpy as a dependency.
 # The check degrades to a warning when the package is missing, so it is
 # technically optional but strongly recommended.

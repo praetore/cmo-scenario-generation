@@ -28,7 +28,9 @@ Install CMO from [Steam](https://store.steampowered.com/app/1076160/Command_Mode
 
 ### 2. Python
 
-Install **Python 3.10 or newer**. The scripts use only the standard library plus your local CMO install.
+Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/). On Windows, check **“Add python.exe to PATH”** during setup.
+
+The agent installs pip dependencies from `requirements.txt` when it runs validation — you do not need to run `pip` yourself.
 
 ### 3. Cursor
 
@@ -36,11 +38,7 @@ Install [Cursor](https://cursor.com) and open this repository as a folder (**Fil
 
 ### 4. Point the tools at your game
 
-From the repository root:
-
-```bash
-copy cmo_config.example.ini cmo_config.ini
-```
+Copy `cmo_config.example.ini` to `cmo_config.ini` in the repository root.
 
 Edit `cmo_config.ini` and set `cmo_install_dir` to your CMO install folder, for example:
 

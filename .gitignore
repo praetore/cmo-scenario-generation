@@ -40,4 +40,5 @@ build/
 *.docx
 *.doc
 *.txt
+!requirements.txt
 *.rtf

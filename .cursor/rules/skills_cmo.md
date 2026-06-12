@@ -314,8 +314,9 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 
 1. Write `generated/src/<name>_src.lua` with WARNO-style OOB header + `cmo.*` calls (source only — not for CMO load). Header layout: **§4 Load file header**.
 2. Edit or accept auto-generated player briefings — **§10** (`generated/src/<name>_briefing.txt` + `.html`).
-3. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
-4. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
+3. **Dependencies:** On a fresh clone, or when preflight warns `global_land_mask not installed`, run `python -m pip install -r requirements.txt` from the repo root before validation (enables land/water geo checks).
+4. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
+5. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
 
 `generate_scenario.py` **re-runs preflight** on the source; if any preflight error is reported it **does not write** the load file (exit code 2).
 
