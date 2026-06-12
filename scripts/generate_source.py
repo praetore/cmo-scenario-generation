@@ -84,7 +84,7 @@ def _split_scenario_for_embed(text: str) -> tuple[str, str]:
 
 
 def _unwrap_block_comments(text: str) -> str:
-    """Convert --[[ ... ]] blocks to line comments (WARNO-style header)."""
+    """Convert --[[ ... ]] blocks to line comments (OOB header)."""
 
     def repl(match: re.Match[str]) -> str:
         lines: list[str] = []

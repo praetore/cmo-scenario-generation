@@ -61,15 +61,15 @@ Paste something like this into Cursor chat (change the idea if you like):
 
 > Make a Cuba scenario — rising US–Cuba tensions in the Caribbean after a disputed shipping incident.
 
-The agent writes the scenario, runs the build tooling, and gives you **`generated/<name>.lua`** — that is the file you load in the game. 
+The agent writes the scenario, runs the build tooling, and gives you **`generated/<name>.lua`** — copy its contents into CMO’s Lua console to build the scenario. 
 
 For the Cuba example, you might get a US naval presence offshore, Cuban patrol aircraft, and coastal defenses on alert. To change what players read at scenario start, edit the briefing in **`generated/src/<name>_briefing.txt`** and ask Cursor to rebuild.
 
 ### 2. Run the scenario in CMO
 
-1. Copy **`generated/<name>.lua`** into your CMO **`Lua`** folder (under the game install; subfolders are fine).
-2. Launch **Command: Modern Operations** → **Scenario Editor**.
-3. Open the **Lua Script Console** and run your script.
+1. Launch **Command: Modern Operations** → **Create New Scenario**.
+2. Open the **Lua Script Console**.
+3. Open **`generated/<name>.lua`**, copy all of it, paste into the console, and **Run**.
 4. Watch the in-game message log for setup output and any errors.
 5. Press **Play** and run the scenario.
 6. Optionally **Save** as a `.scen` file so you can reopen it without re-running the script.
@@ -80,7 +80,7 @@ For the Cuba example, you might get a US naval presence offshore, Cuban patrol a
 |------|--------|------|
 | Describe scenario | **Cursor** chat | Example query above |
 | Build | **Cursor** Agent | Produces `generated/<name>.lua` (with briefings in `generated/src/`) |
-| Load script | **CMO** Scenario Editor | Run `generated/<name>.lua` from the Lua console |
+| Load script | **CMO** Scenario Editor | Blank scenario → paste `generated/<name>.lua` into the Lua console and Run |
 | Play | **CMO** | Start the scenario on the map |
 
 ---

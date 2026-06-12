@@ -23,7 +23,7 @@ Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. U
 | `generated/src/<name>_src.lua` | **Source** — edit this; preflight here; **do not load in CMO** |
 | `generated/<name>.lua` | **CMO load file** — built by `generate_scenario.py` (bootstrap inlined + tree-shaked) |
 
-Standalone scenarios (no `cmo.*` helpers) remain a single `generated/<name>.lua` loaded directly in CMO.
+Standalone scenarios (no `cmo.*` helpers) remain a single `generated/<name>.lua` pasted into CMO’s Lua console the same way.
 
 ## 1. Core sources
 
@@ -32,6 +32,32 @@ Use these when generating code (API reference and rules in Markdown; helpers in 
 - **`.cursor/rules/cmo_api_reference.md`** — **Required** technical reference. Current functions, wrappers, and data types. If a function is not listed here, treat it as deprecated and do not use it.
 - **`.cursor/rules/logic_checks_cmo.md`** — Conceptual “rules of the game.” Use for scenario logic validation (fuel, sensors, doctrine, CSG, strike timing) instead of guessing from the PDF manual.
 - **`scripts/scenario_bootstrap.lua`** — **Helper library** (spawn, CSG, strike/TLAM timing). API reference: **`.cursor/rules/scenario_bootstrap_reference.md`**. Scenarios live under `generated/` (gitignored locally).
+- **`scripts/README.md`** — Python CLI entry points and module layout (`db_search`, `validate_scenario`, `generate_scenario`, …).
+
+### Repository layout
+
+| Path | Purpose |
+| :--- | :--- |
+| `scripts/` | Python tooling — see **`scripts/README.md`** |
+| `.cursor/rules/` | Agent authoring guides (this file, API reference, logic checks) |
+| `generated/` | Local scenario output (gitignored) |
+| `cmo_config.example.ini` | Template → copy to `cmo_config.ini` (gitignored) |
+| `requirements.txt` | Optional pip deps (`global-land-mask` for geo preflight) |
+
+### Database setup
+
+Preflight and `db_search.py` need CMO’s `.db3` SQLite files (hundreds of MB; not in git).
+
+1. Copy `cmo_config.example.ini` to `cmo_config.ini`; set **`cmo_install_dir`** (tools append `\DB`) or **`db_dir`** to the folder containing `DB3K_515.db3`, etc.
+2. Environment overrides: **`CMO_INSTALL_DIR`**, **`CMO_DB_DIR`**.
+3. Alternative: copy needed `.db3` files into repo **`DB/`** (gitignored).
+4. Verify from the repository root:
+
+   ```bash
+   python -c "import sys; sys.path.insert(0, 'scripts'); from cmo_db import format_database_layout_message; print(format_database_layout_message())"
+   ```
+
+   You should see a DB path and a count of `.db3` files. Fix config before `db_search` or preflight if this fails.
 
 ### Reference PDFs (local, gitignored)
 
@@ -148,7 +174,7 @@ DBIDs are **not universal** — they differ by database version (e.g. DB3K v515 
 
 ### Load file header (`*_src.lua` → CMO load file)
 
-Bootstrap scenarios: edit **`generated/src/<name>_src.lua`**, generate with **`python scripts/generate_scenario.py`**, load **`generated/<name>.lua`**. The OOB comment block at the top of the source becomes the **player-visible header** in the load file (WARNO-style `--` line comments). Implementation: `prepare_load_header_and_annotations()` in **`scripts/generate_source.py`**.
+Bootstrap scenarios: edit **`generated/src/<name>_src.lua`**, generate with **`python scripts/generate_scenario.py`**, load **`generated/<name>.lua`**. The OOB comment block at the top of the source becomes the **player-visible header** in the load file (`--` line comments). Implementation: `prepare_load_header_and_annotations()` in **`scripts/generate_source.py`**.
 
 **Write in `_src.lua` (top → bottom):**
 
@@ -157,7 +183,7 @@ Bootstrap scenarios: edit **`generated/src/<name>_src.lua`**, generate with **`p
 3. **`-- @…` annotations** (preflight / policy — not in the visible header)
 4. **Scenario Lua** (`local scenario_date`, `cmo.*`, `ScenEdit_*`, …)
 
-Prefer **`--` line comments** for the OOB block (like **`generated/warno_air_strike.lua`**). Block comments `--[[ … ]]` are OK in source — generate unwraps them to line comments.
+Prefer **`--` line comments** for the OOB block. Block comments `--[[ … ]]` are OK in source — generate unwraps them to line comments.
 
 **Generated load file layout:**
 
@@ -177,7 +203,7 @@ local scenario_date = '…'
 …
 ```
 
-Do **not** expect `Source:` / `Bootstrap:` / `Preflight:` / `@` lines at the top of the load file — generate removes tooling from the header and places `@` lines **after** the bootstrap block, **before** scenario code. Standalone scenarios (no bootstrap) keep one file; preflight/tooling lines may remain at the bottom of the header (WARNO pattern).
+Do **not** expect `Source:` / `Bootstrap:` / `Preflight:` / `@` lines at the top of the load file — generate removes tooling from the header and places `@` lines **after** the bootstrap block, **before** scenario code. Standalone scenarios (no bootstrap) keep one file; preflight/tooling lines may remain at the bottom of the header.
 
 **Minimal OOB skeleton in `_src.lua`:**
 
@@ -302,7 +328,7 @@ Helper messages (see `scenario_bootstrap.lua`):
 | :--- | :--- |
 | Spawn, CSG, strike/TLAM timing | **`scripts/scenario_bootstrap.lua`** — edit helpers here; scenarios call `cmo.*` |
 | Bootstrap API & recipes | **`scenario_bootstrap_reference.md`** + **`skills_cmo.md` §9** |
-| Run in CMO | **`python scripts/generate_scenario.py generated/src/<file>_src.lua`** → load **`generated/<file>.lua`** |
+| Run in CMO | **`generate_scenario.py`** → paste **`generated/<file>.lua`** into a blank scenario’s Lua console (**§9 Run in CMO**) |
 | Preflight | `validate_scenario.py` on **`generated/src/<file>_src.lua`** (merges bootstrap Lua automatically) |
 | Raw CMO API one-liners | `cmo_api_reference.md` |
 
@@ -312,13 +338,24 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 
 ### Workflow
 
-1. Write `generated/src/<name>_src.lua` with WARNO-style OOB header + `cmo.*` calls (source only — not for CMO load). Header layout: **§4 Load file header**.
+1. Write `generated/src/<name>_src.lua` with an OOB header comment block + `cmo.*` calls (source only — not for CMO load). Header layout: **§4 Load file header**.
 2. Edit or accept auto-generated player briefings — **§10** (`generated/src/<name>_briefing.txt` + `.html`).
 3. **Dependencies:** On a fresh clone, or when preflight warns `global_land_mask not installed`, run `python -m pip install -r requirements.txt` from the repo root before validation (enables land/water geo checks).
 4. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
-5. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → load **`generated/<name>.lua`** in CMO.
+5. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → **`generated/<name>.lua`** for CMO playtest (**Run in CMO** below).
 
 `generate_scenario.py` **re-runs preflight** on the source; if any preflight error is reported it **does not write** the load file (exit code 2).
+
+### Run in CMO (playtest)
+
+After generate, load the scenario in-game (user steps — describe when handing off):
+
+1. **Command: Modern Operations** → **Scenario Editor** → create a **blank scenario** (same database as the script, e.g. DB3K 515).
+2. Open the **Lua Script Console**.
+3. Open **`generated/<name>.lua`** in a text editor, copy all of it, paste into the console, and **Run**.
+4. Watch the message log for `OK:` / `ERROR:` / `NOTE:` lines from `print()`; press **Play**; optionally **Save** as `.scen`.
+
+**Never** paste `generated/src/*_src.lua` — source only; bootstrap is not inlined and tooling lines must not go to CMO.
 
 Reference implementation: your latest scenario in `generated/` (gitignored locally) — follow the skeleton below.
 
