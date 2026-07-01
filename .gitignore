@@ -42,3 +42,4 @@ build/
 *.txt
 !requirements.txt
 *.rtf
+*.pptx
