@@ -73,6 +73,20 @@ Preflight and `db_search.py` need CMO’s `.db3` SQLite files (hundreds of MB; n
 
 ## 2. Essential Lua API rules (CMO-specific)
 
+### Lua language version (CMO = Lua 5.3)
+
+CMO’s script console and event Lua run **Lua 5.3** (not 5.1, not 5.4). Write bootstrap and scenario code for **5.3 only** — do not polyfill removed stdlib APIs; use the 5.3 forms.
+
+| Use (5.3) | Not in CMO (5.1 / removed) |
+| :--- | :--- |
+| `math.atan(y, x)` | `math.atan2(y, x)` → `attempt to call a nil value` |
+| `table.unpack(t)` | global `unpack(t)` |
+| Integer `//` when you need floor division | assuming `/` truncates toward zero for integers |
+
+- **Preflight / luacheck:** Repo root **`.luacheckrc`** sets `lua_version = "5.3"` and `std = "lua53"`. `validate_scenario.py` runs luacheck with that config — agents must not assume desktop Lua 5.1/5.4 rules.
+- **API surface:** CMO adds globals (`ScenEdit_*`, `VP_*`, `World_*`, `Tool_*`); luacheck ignores those via `.luacheckrc`. Scenario/bootstrap code may use `cmo` global only when bootstrap is inlined.
+- **Reference:** [Command Lua Docs](https://commandlua.github.io/) for game API; [Lua 5.3 manual](https://www.lua.org/manual/5.3/) for language semantics.
+
 ### Unit creation (`ScenEdit_AddUnit`)
 
 - **Required fields:** `side`, `type`, `unitname`, `dbid`.
@@ -81,7 +95,8 @@ Preflight and `db_search.py` need CMO’s `.db3` SQLite files (hundreds of MB; n
   - **`Facility`:** Most land facilities (airfields, SAM) cannot be placed in open ocean — `Placement aborted`. Maritime facilities (ports/platforms) may be on water if the DB unit allows it.
   - **`Ship` / `Sub`:** **Water only** (not on land). Otherwise CMO reports errors such as `cannot place ship over land`. Check coordinates on the map or with `World_GetElevation`: elevation **> 0** = land.
   - **Best practice:** Use map/satellite imagery or the CMO cursor; when in doubt, check elevation before spawn.
-  - **Land vs water (mandatory):** Ships/subs → water only; facilities (`place_base`, `place_sam`) → land only (`elevation > 0`). Bootstrap helpers enforce via `World_GetElevation`; preflight uses `global_land_mask` on **every** `place_ship` / `place_sub` / `place_base` / `place_sam` / standalone `AddUnit Facility` (`Geo placement:` errors).
+  - **Land vs water (mandatory):** Ships/subs → water only; facilities (`place_base`, `place_sam`, **`register_civilian_airport`**) → land only (`elevation > 0`). `register_civilian_airport` calls `place_base` internally — same abort at CMO runtime. Bootstrap helpers enforce via `World_GetElevation`; preflight uses `global_land_mask` on **every** `place_ship` / `place_sub` / `place_base` / `place_sam` / **`register_civilian_airport`** / standalone `AddUnit Facility` (`Geo placement:` errors).
+  - **Reclaimed / coastal airports (pitfall):** Real-world ICAO coordinates are not always land in CMO. **Chek Lap Kok (Hong Kong Intl ~22.31, 113.91)** and similar fill islands often report **elevation ≤ 0** → `Facility placement underwater`. Before `register_civilian_airport`, verify land (CMO map cursor, `World_GetElevation`, or preflight). Use a nearby mainland airport (e.g. **Shenzhen Bao'an** for HK traffic) or nudge coords onto natural land — do not keep underwater ICAO coords.
   - **Lua helper** (ships/subs — also built into `cmo.place_ship` / `place_sub`):
 
   ```lua
@@ -461,3 +476,12 @@ If `.txt` is newer, `generate_scenario.py` regenerates `.html`; if `.html` is ne
 - Skip: `--no-briefing`
 
 Reference: **`scenario_bootstrap_reference.md`** (briefing section), Cuba briefing example in `generated/src/`.
+
+## 11. Civilian air traffic
+
+When adding neutral civil air (`cmo.configure_civilian_traffic`, `register_civilian_airport`, `add_civilian_airliner`):
+
+- **Airport coords = land (mandatory):** `register_civilian_airport(side, name, lat, lon)` is **`place_base`** under the hood. Preflight geo-checks it like any facility.
+- **Reclaimed airports:** Hong Kong Intl (Chek Lap Kok), some coastal fill sites — CMO `World_GetElevation` ≤ 0 even though they are real airports. Use mainland alternates (Shenzhen, Guangzhou) or verified land coords; never assume ICAO lat/lon is spawn-safe.
+- **Flight paths:** Most flights exit the theater (`add_civilian_airliner` default); only a minority land (`mode = 'land'` + `base_guid`). See `logic_checks_cmo.md` §11.
+- **Preflight:** `validate_scenario.py` — geo placement + civilian course/RTB checks.

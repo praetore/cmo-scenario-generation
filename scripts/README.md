@@ -1,6 +1,6 @@
 # Python tools
 
-Dependencies: Python 3.10+; install with `pip install -r requirements.txt` (`global-land-mask` for the preflight land/water placement check). Luacheck is auto-installed on Windows during preflight.
+Dependencies: Python 3.10+; install with `pip install -r requirements.txt` (`global-land-mask` for the preflight land/water placement check). Luacheck is auto-installed on Windows during preflight. **Lua static analysis uses repo `.luacheckrc` (`lua_version = "5.3"` — same as CMO runtime).**
 
 Run from the repository root.
 
@@ -45,7 +45,7 @@ All generated scenario material under `generated/` — headers, briefings, and p
 | `preflight_checks.py` | Individual validation checks |
 | `preflight_constants.py` | Shared constants |
 | `preflight_report.py` | Error/warning report helpers |
-| `preflight_luacheck.py` | Download/run luacheck for static Lua analysis |
+| `preflight_luacheck.py` | Download/run luacheck for static Lua analysis (config: repo `.luacheckrc`, Lua 5.3) |
 
 ### Generate (`generate_*`)
 

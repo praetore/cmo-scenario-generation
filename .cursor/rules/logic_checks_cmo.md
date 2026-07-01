@@ -187,6 +187,8 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
   - *Transit (majority)*: a plotted `course` — waypoints via `ScenEdit_SetUnit({guid=…, course={…}})` — whose **final waypoint lies outside the engagement theater**, so the aircraft exits the play area instead of circling over the fight.
   - *Landing (minority)*: assigned a **same-side** civilian airfield (`base = <airport guid>`) with `rtb = true`, so CMO flies the approach and lands.
   - *Bootstrap (preferred)*: `cmo.add_civilian_airliner(...)` — **auto** flies straight out of the theater (no instant RTB turns); **land** uses a lead-in on current heading then a gradual approach course (no `rtb=true` snap turn). Pick `base_guid` on the same general heading when forcing a lander.
+  - *Airport placement (mandatory)*: `cmo.register_civilian_airport` calls `place_base` — coords must be **land** (`World_GetElevation` > 0). Preflight checks these like `place_base`.
+  - *Reclaimed / fill airports (pitfall)*: Real ICAO positions on artificial islands or coastal reclamation (e.g. **Hong Kong Intl ~22.31, 113.91 / Chek Lap Kok**) often fail in CMO with `Facility placement underwater`. Use a nearby mainland field (e.g. Shenzhen Bao'an) or coords verified on natural land — do not trust ICAO alone.
   - *Check (proportion)*: Only a **small portion** of civilian flights should land inside the scenario area; **most** are overflights that exit. Do not make all (or nearly all) civilian flights land.
   - *Preflight*: `scripts/validate_scenario.py` warns when a civilian side has air traffic but **no** plotted `course`, **no** `base`+`rtb`, and **no** `add_civilian_airliner` helper calls.
 
@@ -241,7 +243,7 @@ This document contains conceptual gameplay rules and logic from the CMO manual. 
 
 ### Geo placement — land vs water (mandatory)
 - **Ship / sub** (`place_ship`, `place_sub`): coordinates must be **water** (`World_GetElevation` ≤ 0 in Lua; preflight uses `global_land_mask`). CMO: *cannot place ship over land*.
-- **Facility / land unit** (`place_base`, `place_sam`, `ScenEdit_AddUnit` type `Facility` with lat/lon): must be **land** (elevation > 0). CMO: *This point appears to be underwater. Placement aborted!*
+- **Facility / land unit** (`place_base`, `place_sam`, **`register_civilian_airport`**, `ScenEdit_AddUnit` type `Facility` with lat/lon): must be **land** (elevation > 0). CMO: *This point appears to be underwater. Placement aborted!*
 - **Check**: `--validate-scenario` reports **`Geo placement:`** for every independently placed unit (not aircraft on `base=`). Install `global-land-mask` (see `requirements.txt`).
 - **Runtime**: `scenario_bootstrap.lua` — `place_base` / `place_sam` call `_require_land_placement`; `place_ship` / `place_sub` keep existing elevation guards.
 

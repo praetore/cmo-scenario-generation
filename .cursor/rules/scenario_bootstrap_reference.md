@@ -119,7 +119,7 @@ Register the engagement box once, add 1–3 same-side airports, then one call pe
 | Function | Notes |
 | :--- | :--- |
 | `configure_civilian_traffic({ theater = { lat_min, lat_max, lon_min, lon_max } })` | Theater bounds for exit courses |
-| `register_civilian_airport(side, name, lat, lon)` | Civilian-side airfield + RTB target |
+| `register_civilian_airport(side, name, lat, lon)` | Civilian-side airfield + RTB target — **uses `place_base`** (land only; preflight geo-checked). Avoid reclaimed-island ICAO coords (e.g. HK Chek Lap Kok → use Shenzhen or verified land). |
 | `add_civilian_airliner(side, name, dbid, loadoutid, lat, lon, alt_m, heading, speed_kts, opts?)` | **auto**: straight exit course (fuel-capped); **land**: lead-in + gradual approach (no RTB snap); **transit**: force theater exit |
 
 ```lua

@@ -2140,7 +2140,7 @@ function M._bearing_deg(lat1, lon1, lat2, lon2)
     local dlon = math.rad(lon2 - lon1)
     local y = math.sin(dlon) * math.cos(lat2r)
     local x = math.cos(lat1r) * math.sin(lat2r) - math.sin(lat1r) * math.cos(lat2r) * math.cos(dlon)
-    return (math.deg(math.atan2(y, x)) + 360) % 360
+    return (math.deg(math.atan(y, x)) + 360) % 360
 end
 
 function M._heading_delta(from_deg, to_deg)

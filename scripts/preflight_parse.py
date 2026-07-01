@@ -443,6 +443,24 @@ def _parse_facility_placements(content):
             ),
             lambda m: (m.group(1), m.group(2), int(m.group(3)), m.group(4), m.group(5), None),
         ),
+        (
+            "facility",
+            "register_civilian_airport",
+            re.compile(
+                r"(?:local\s+)?(\w+)\s*=\s*(?:cmo\.)?register_civilian_airport\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE,
+            ),
+            lambda m: (m.group(2), m.group(3), None, m.group(4), m.group(5), m.group(1)),
+        ),
+        (
+            "facility",
+            "register_civilian_airport",
+            re.compile(
+                r"^[ \t]*(?:cmo\.)?register_civilian_airport\s*\(\s*([^,]+)\s*,\s*'([^']*)'\s*,\s*([^,]+),\s*([^)]+)\s*\)",
+                re.IGNORECASE | re.MULTILINE,
+            ),
+            lambda m: (m.group(1), m.group(2), None, m.group(3), m.group(4), None),
+        ),
     )
     for kind, source, pattern, extract in patterns:
         for match in pattern.finditer(body):

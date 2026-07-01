@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from cmo_config import format_config_setup_hint, resolve_db_dir
-from preflight_luacheck import install_luacheck_local, luacheck_exe_path
+from preflight_luacheck import install_luacheck_local, luacheck_exe_path, REPO_ROOT
 from cmo_db import format_database_layout_message, open_db, resolve_source_db
 from preflight_checks import *
 from preflight_constants import *
@@ -70,25 +70,16 @@ def _run_luacheck(scenario_path):
             ]
         return {"errors": [], "warnings": warnings, "ok": []}
 
-    # luacheck 1.x does not expand '*' in --globals (a name like 'ScenEdit_*' is
-    # taken literally), so the CMO API was never actually whitelisted. Use
-    # --ignore <code>/<var-pattern> (Lua patterns) for the API prefixes instead,
-    # and whitelist the single 'cmo' bootstrap global by exact name. The trailing
-    # '--' is required: without it the --globals/--ignore list swallows the file
-    # path, leaving luacheck with no file to check (critical exit, reported as a
-    # bogus "luacheck failed with errors").
+    # Repo .luacheckrc: lua_version = "5.3" (CMO runtime). Trailing '--' keeps the file path
+    # separate from luacheck options.
+    luacheck_config = REPO_ROOT / ".luacheckrc"
     cmd = [
         luacheck_bin,
+        "--config",
+        str(luacheck_config),
         "--codes",
         "--ranges",
         "--no-color",
-        "--globals",
-        "cmo",
-        "--ignore",
-        "113/ScenEdit_.*",
-        "113/VP_.*",
-        "113/World_.*",
-        "113/Tool_.*",
         "--",
         scenario_path,
     ]
