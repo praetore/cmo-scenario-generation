@@ -14,6 +14,9 @@ M.state = {
     tlam_launch_time = nil,
     STRIKE_AIR_MISSION = nil,
     TLAM_STRIKE_MISSION = nil,
+    STRIKE_TASKPOOL = nil,
+    CALCM_STRIKE_PACKAGE = nil,
+    strike_air_packages = nil,
     strike_mission_names = {},
     scenario_year = nil,
     nuclear_weapons_allowed = false,
@@ -53,11 +56,99 @@ function M.configure_strike_timing(cfg)
     M.state.strike_package_date = cfg.date or M.state.strike_package_date
     M.state.strike_package_tot = cfg.tot or M.state.strike_package_tot
     M.state.tlam_launch_time = cfg.tlam_launch or M.state.tlam_launch_time
-    M.state.STRIKE_AIR_MISSION = cfg.air_mission or M.state.STRIKE_AIR_MISSION
-    M.state.TLAM_STRIKE_MISSION = cfg.naval_mission or M.state.TLAM_STRIKE_MISSION
+    M.state.STRIKE_TASKPOOL = cfg.task_pool or M.state.STRIKE_TASKPOOL
+    M.state.STRIKE_AIR_MISSION = cfg.air_mission or cfg.carrier_package or M.state.STRIKE_AIR_MISSION
+    M.state.CALCM_STRIKE_PACKAGE = cfg.calcm_package or M.state.CALCM_STRIKE_PACKAGE
+    M.state.TLAM_STRIKE_MISSION = cfg.naval_mission or cfg.tlam_package or M.state.TLAM_STRIKE_MISSION
     M.state.strike_side = cfg.side or M.state.strike_side
+    M.state.strike_air_packages = nil
+    if M.state.STRIKE_TASKPOOL then
+        M.register_strike_mission(M.state.STRIKE_TASKPOOL)
+        M.state.strike_air_packages = {}
+        if M.state.STRIKE_AIR_MISSION then
+            table.insert(M.state.strike_air_packages, M.state.STRIKE_AIR_MISSION)
+        end
+        if M.state.CALCM_STRIKE_PACKAGE then
+            table.insert(M.state.strike_air_packages, M.state.CALCM_STRIKE_PACKAGE)
+        end
+    end
     M.register_strike_mission(M.state.STRIKE_AIR_MISSION)
+    M.register_strike_mission(M.state.CALCM_STRIKE_PACKAGE)
     M.register_strike_mission(M.state.TLAM_STRIKE_MISSION)
+end
+
+-- Task pool (category=2) + Strike packages (category=1, pool=parent). Targets on pool propagate to packages.
+function M.create_strike_task_pool(side, pool_name, opts)
+    opts = opts or {}
+    side = side or M.state.strike_side or 'United States'
+    if not pool_name or pool_name == '' then
+        M._abort_scenario_generation('create_strike_task_pool — pool_name required')
+    end
+    local strike_type = opts.type or 'Land'
+    local pool = ScenEdit_AddMission(side, pool_name, 'Strike', {
+        type = strike_type,
+        category = 2,
+    })
+    if not pool then
+        M._abort_scenario_generation('create_strike_task_pool — failed to add pool ' .. pool_name)
+    end
+    M.register_strike_mission(pool_name)
+    M.state.STRIKE_TASKPOOL = pool_name
+    for _, pkg in ipairs(opts.packages or {}) do
+        local pkg_name = pkg.name
+        if pkg_name and pkg_name ~= '' then
+            local pkg_mission = ScenEdit_AddMission(side, pkg_name, 'Strike', {
+                type = pkg.type or strike_type,
+                category = 1,
+                pool = pool_name,
+            })
+            if not pkg_mission then
+                M._abort_scenario_generation('create_strike_task_pool — failed to add package ' .. pkg_name)
+            end
+            M.register_strike_mission(pkg_name)
+            if pkg.options then
+                M.configure_strike_mission_options(side, pkg_name, pkg.options)
+            end
+        end
+    end
+    print('OK: Strike task pool "' .. pool_name .. '" with ' .. #(opts.packages or {}) .. ' package(s)')
+    return pool_name
+end
+
+function M.assign_strike_target(target_guid, pool_name, package_names)
+    if not target_guid then
+        return false
+    end
+    pool_name = pool_name or M.state.STRIKE_TASKPOOL
+    if pool_name and pool_name ~= '' then
+        ScenEdit_AssignUnitAsTarget(target_guid, pool_name)
+    end
+    package_names = package_names or M.state.strike_air_packages
+    if package_names then
+        for _, pkg_name in ipairs(package_names) do
+            ScenEdit_AssignUnitAsTarget(target_guid, pkg_name)
+        end
+    end
+    if M.state.TLAM_STRIKE_MISSION then
+        ScenEdit_AssignUnitAsTarget(target_guid, M.state.TLAM_STRIKE_MISSION)
+    end
+    return true
+end
+
+function M.set_task_pool_tot_schedule(side, pool_name, tot_dt, opts)
+    opts = opts or {}
+    side = side or M.state.strike_side or 'United States'
+    pool_name = pool_name or M.state.STRIKE_TASKPOOL
+    if not pool_name or not tot_dt then
+        return false
+    end
+    return M.set_strike_tot_schedule(side, pool_name, tot_dt, {
+        date = opts.date or M.state.strike_package_date,
+        skip_flight_plan = true,
+        wrapper_only = true,
+        verify = opts.verify ~= false,
+        on_deactivate_unassign = false,
+    })
 end
 
 function M.mission_schedule_date(date_slash)
@@ -1137,9 +1228,9 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
         M._abort_scenario_generation('setup_csg_strike_on_air_strike — no strike ships')
     end
     local side = M.state.strike_side or 'United States'
-    local strike_mission = M.state.STRIKE_AIR_MISSION
+    local strike_mission = M.state.TLAM_STRIKE_MISSION or M.state.STRIKE_AIR_MISSION
     if not strike_mission then
-        M._abort_scenario_generation('setup_csg_strike_on_air_strike — STRIKE_AIR_MISSION not configured')
+        M._abort_scenario_generation('setup_csg_strike_on_air_strike — TLAM_STRIKE_MISSION / STRIKE_AIR_MISSION not configured')
     end
     M.configure_naval_strike_doctrine(side)
     local sched = M.strike_schedule_datetimes()
@@ -1182,32 +1273,43 @@ function M._q_lua_str(s)
     return tostring(s):gsub("'", "\\'")
 end
 
-function M.finalize_strike_air_after_flight_plan()
-    local air_mission = M.state.STRIKE_AIR_MISSION
+function M.finalize_strike_package_after_flight_plan(mission_name)
+    mission_name = mission_name or M.state.STRIKE_AIR_MISSION
     local side = M.state.strike_side
     local sched = M.strike_schedule_datetimes()
-    local m = ScenEdit_GetMission(side, air_mission)
+    local m = ScenEdit_GetMission(side, mission_name)
     if m and m.updateWPtimes then
         local ok_wp, err_wp = pcall(function()
             m:updateWPtimes()
         end)
         if not ok_wp then
-            print('WARNING: updateWPtimes failed: ' .. tostring(err_wp))
+            print('WARNING: updateWPtimes failed for ' .. tostring(mission_name) .. ': ' .. tostring(err_wp))
         end
     end
-    -- CreateMissionFlightPlan may drop assignments; restore all spawned aircraft (never SetMission on strike package here).
-    local ok, fail = M.refresh_spawned_air_assignments(nil)
+    local ok, fail = M.refresh_spawned_air_assignments(mission_name)
     if fail > 0 then
-        ok, fail = M.refresh_spawned_air_assignments(nil)
+        ok, fail = M.refresh_spawned_air_assignments(mission_name)
     end
-    print('Air assign after flight plan: ' .. ok .. ' OK, ' .. fail .. ' failed')
-    -- Reassert TOT via wrapper only (SetMission on strike package after assign clears ORBAT).
-    M.set_strike_tot_schedule(side, air_mission, sched.tot, {
+    print('Air assign after flight plan (' .. tostring(mission_name) .. '): ' .. ok .. ' OK, ' .. fail .. ' failed')
+    M.set_strike_tot_schedule(side, mission_name, sched.tot, {
         skip_flight_plan = true,
         wrapper_only = true,
         verify = true,
     })
     return ok, fail
+end
+
+function M.finalize_strike_air_after_flight_plan()
+    if M.state.strike_air_packages and #M.state.strike_air_packages > 0 then
+        local total_ok, total_fail = 0, 0
+        for _, name in ipairs(M.state.strike_air_packages) do
+            local ok, fail = M.finalize_strike_package_after_flight_plan(name)
+            total_ok = total_ok + (ok or 0)
+            total_fail = total_fail + (fail or 0)
+        end
+        return total_ok, total_fail
+    end
+    return M.finalize_strike_package_after_flight_plan(M.state.STRIKE_AIR_MISSION)
 end
 
 function M.verify_spawned_air_assignments(mission_filter)
@@ -1411,7 +1513,39 @@ end
 
 function M.add_strike_assign_restore_event(opts)
     opts = opts or {}
-    local mission_filter = opts.mission or M.state.STRIKE_AIR_MISSION
+    local mission_filter = opts.mission
+    if mission_filter == nil and opts.missions then
+        local lines = { "print('NOTE: Strike assign restore event')" }
+        local count = 0
+        for _, mname in ipairs(opts.missions) do
+            local part = M.build_strike_assign_restore_script(mname)
+            if part ~= '' then
+                for line in part:gmatch('[^\r\n]+') do
+                    if not line:match("^print%('NOTE:") and not line:match("^print%('OK:") then
+                        table.insert(lines, line)
+                        count = count + 1
+                    end
+                end
+            end
+        end
+        if count == 0 then
+            print('WARNING: Strike assign restore — no spawned aircraft for missions')
+            return false
+        end
+        table.insert(lines, "print('OK: Strike assign restore — " .. count .. " aircraft')")
+        local script = table.concat(lines, '\r\n')
+        return M._register_strike_assign_restore_event(script, opts)
+    end
+    if mission_filter == nil and M.state.strike_air_packages and #M.state.strike_air_packages > 1 then
+        return M.add_strike_assign_restore_event({
+            missions = M.state.strike_air_packages,
+            start_date = opts.start_date,
+            restore_times = opts.restore_times,
+            event_name = opts.event_name,
+            run_now = opts.run_now,
+        })
+    end
+    mission_filter = mission_filter or M.state.STRIKE_AIR_MISSION
     local script = M.build_strike_assign_restore_script(mission_filter)
     if script == '' then
         print('WARNING: Strike assign restore — no spawned aircraft for ' .. tostring(mission_filter))
@@ -1421,7 +1555,11 @@ function M.add_strike_assign_restore_event(opts)
     if opts.run_now then
         M.run_strike_assign_restore(mission_filter)
     end
+    return M._register_strike_assign_restore_event(script, opts)
+end
 
+function M._register_strike_assign_restore_event(script, opts)
+    opts = opts or {}
     local base_event = opts.event_name or 'Strike assign restore'
     local start_date = opts.start_date or M.state.strike_package_date
     local restore_times = opts.restore_times or { '00:00:05' }

@@ -62,6 +62,8 @@ _CSG_PATROL_MISSION = "csg station keeping"
 _CSG_ALLOWED_SHIP_STRIKE_MISSIONS = (
     "caribbean tlam salvo",
     "caribbean thunder strike",
+    "tlam strike",
+    "caribbean thunder",
 )
 
 _CSG_SHIP_MISSIONS_BREAKING_FORMATION = (
