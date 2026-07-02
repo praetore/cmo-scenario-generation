@@ -1204,6 +1204,8 @@ This function Sets the properties of an existing unit
 - **latitude =** (`latitude`): The latitude of the new reference point
 - **longitude =** (`longitude`): The longitude of the new reference point
 
+**Practical note (airborne at scenario start):** Setting `latitude`/`longitude`/`altitude` on aircraft that were spawned **with** `base=` does not reliably place them in flight — they stay on the carrier/ramp. For ISR/AEW already on-orbit at H-hour: spawn the first sortie with `ScenEdit_AddUnit` **without** `base` at orbit coordinates, or use `launch=true` (often via a Play-time event) together with position/throttle. See `skills_cmo.md` §2 and `scenario_bootstrap_reference.md` recipe *Support already on-orbit at scenario start*.
+
 ---
 
 ### ScenEdit_SetUnitDamage()

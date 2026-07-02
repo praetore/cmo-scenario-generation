@@ -23,6 +23,18 @@ Primary guide for generating **Command: Modern Operations (CMO)** Lua scripts. U
 | `generated/src/<name>_src.lua` | **Source** — edit this; preflight here; **do not load in CMO** |
 | `generated/<name>.lua` | **CMO load file** — built by `generate_scenario.py` (bootstrap inlined + tree-shaked) |
 
+**Mandatory for agents (bootstrap scenarios):**
+
+1. **Edit** `generated/src/<name>_src.lua` only — never hand-edit `generated/<name>.lua` (it is overwritten on generate).
+2. **After every `*_src.lua` change**, run generate before you consider the task done or tell the user to playtest:
+
+   ```bash
+   python scripts/generate_scenario.py generated/src/<name>_src.lua
+   ```
+
+3. **Do not** ask the user to run generate — the agent runs it. `generate_scenario.py` re-runs preflight; exit code **2** means no load file was written (fix errors first).
+4. **Load in CMO** only `generated/<name>.lua` — **never** `*_src.lua` (no inlined bootstrap, wrong file for the game).
+
 Standalone scenarios (no `cmo.*` helpers) remain a single `generated/<name>.lua` pasted into CMO’s Lua console the same way.
 
 ## 1. Core sources
@@ -113,6 +125,13 @@ CMO’s script console and event Lua run **Lua 5.3** (not 5.1, not 5.4). Write b
 - **Parameter names:** `unitname` (not `name`), `latitude` (not `lat`), `longitude` (not `long`).
 - **Unit types:** `'Air'`, `'Ship'`, `'Sub'`, `'Facility'`, `'Satellite'`.
 - **Base assignment:** `base = 'GUID'` to host aircraft on an airfield or carrier. Always use the base object’s `.guid` and verify it is not `nil`.
+- **Airborne at scenario start (hosted vs on-orbit):** `ScenEdit_SetUnit({ latitude, longitude, altitude })` on aircraft spawned **with** `base=` does **not** put them in the air — CMO keeps them on the deck/ramp. To have ISR/AEW **already on-station at H-hour**:
+  1. Spawn the **first on-orbit flight** with `ScenEdit_AddUnit` **without** `base`, at orbit lat/lon/altitude + `mission=` (same pattern as `add_civilian_airliner`).
+  2. Spawn **relief pool** aircraft on carrier/base via `add_air_unit_checked` / `spawn_air_wing` (remaining airframes).
+  3. Set mission `FlightSize=1`, `MinAircraftReq=1`, `OnDeactivateUassign=false` so one airframe orbits while the full pool rotates.
+  4. Re-apply orbit position **after** all schedule mutations (`set_patrol_on_station_schedule`, strike flight plans, `restore_all_spawned_air_assignments`).
+  5. Register **Play-time** events (`ScenLoaded` + `Time` at `scenario_start_time + ~5s`) that call `ScenEdit_SetUnit({ …, launch=true, throttle='Cruise' })` on the on-orbit GUIDs — belt-and-suspenders when the sim resets hosted state at Play.
+  - Reference: `generated/src/cuba_pressure_2026_demo_src.lua` (`demo_spawn_support_on_orbit`, `demo_register_support_on_orbit_events`).
 
 ### Database & ID verification
 
@@ -263,6 +282,8 @@ cmo.scenario_set_start(scenario_date, scenario_start_time)
 - `CreateMissionFlightPlan` uses `DATEONTARGET = scenario_date` (slashes).
 - Patrol/Support **Time on Station** in ME: `set_patrol_on_station_schedule` — **Patrol** uses `CreateMissionFlightPlan` `TIMEONTARGET`; **Support** (land ISR) uses wrapper `TimeOnTargetStation` + `CreateMissionFlightPlan` `TAKEOFFTIME` (transit default 90 min). Do not use `TIMEONTARGET` flight plan on Support — it clears GetMission fields.
 - After TOT/TOS assignment: `verify_mission_schedule` — **fatal** on `TimeOnTargetStation` / on-station mismatch. Strike: `set_strike_tot_schedule` (flight plan + wrapper TOT). Patrol/Support: `set_patrol_on_station_schedule`. Unified strike `starttime`/`TakeOffTime` in GetMission often empty → `optional_fields = { 'starttime', 'takeoff' }`.
+- **Support relief rotation (ISR/AEW):** When the OOB has N airframes but only **one** should be on-station at a time, set `UseFlightSize=true`, `FlightSize=1`, `MinAircraftReq=1`, `OnDeactivateUassign=false`. Assign **all** N aircraft to the Support mission; CMO rotates relief from the pool. Do **not** set `FlightSize=2` with 5 drones — that launches pairs and leaves the demo wrong. Preflight does not yet count this; document in OOB header.
+- **Play restore `restore_times` vs scenario start:** `add_mission_schedule_restore_event` / `add_strike_assign_restore_event` Time triggers use **absolute** `HH:MM:SS` on `strike_package_date` via `mission_schedule_datetime`. Default `'00:00:05'` only works when H-hour is midnight. If `scenario_start_time` is later (e.g. `03:00:00`), use **`scenario_start + 5s`** (e.g. `03:00:05`) for the first Play refresh — otherwise the trigger fires **before** H-hour and does not help at Play.
 - `Tool_DateTimeToSeconds("2026-05-08 14:00:00")` / `Tool_SecondsToDateTime(seconds)` for ad-hoc math.
 
 ## 6. Init log messages (mandatory)
@@ -315,6 +336,8 @@ print('Strike schedule (hardcoded): TOT=' .. strike_package_tot .. ' Z | TLAM la
 | Empty magazines + shared strike doctrine → **guns on land** | `configure_strike_ship_weapon_policy` per hull (auto on Strike assign) + play-time WRA refresh |
 | SEAD/Patrol `MinAircraftReq` × `FlightSize` = launch trigger | Set `MinAircraftReq` to **flight count**, not total aircraft (same as `StrikeMinAircraftReq × StrikeFlightSize`) |
 | `AssignUnitToMission(group_name, patrol)` clears TLAM shooters | Assign patrol on **group lead (CVN) only** |
+| ISR/AEW must be **in the air** at H-hour but spawned on carrier/base | Spawn first flight **without** `base` at orbit coords; relief on host; `launch=true` event at Play — `SetUnit` lat/lon on hosted air stays on deck |
+| `restore_times = { '00:00:05', … }` with `scenario_start_time = '03:00:00'` | First Time trigger is **00:00:05 Z**, not H-hour — use `03:00:05` (or `cmo.hms_subtract_minutes(scenario_start_time, -1)` pattern) |
 
 Helper messages (see `scenario_bootstrap.lua`):
 
@@ -357,7 +380,7 @@ Bootstrap **implementation** is only in `scripts/scenario_bootstrap.lua`; **docu
 2. Edit or accept auto-generated player briefings — **§10** (`generated/src/<name>_briefing.txt` + `.html`).
 3. **Dependencies:** On a fresh clone, or when preflight warns `global_land_mask not installed`, run `python -m pip install -r requirements.txt` from the repo root before validation (enables land/water geo checks).
 4. Preflight: `python scripts/validate_scenario.py generated/src/<name>_src.lua --series DB3K --version 515`
-5. Generate: `python scripts/generate_scenario.py generated/src/<name>_src.lua` → **`generated/<name>.lua`** for CMO playtest (**Run in CMO** below).
+5. **Generate (mandatory after any src edit):** `python scripts/generate_scenario.py generated/src/<name>_src.lua` → **`generated/<name>.lua`** for CMO playtest (**Run in CMO** below). Re-run step 5 whenever you change the source — edits to `*_src.lua` do **not** reach CMO until generate succeeds.
 
 `generate_scenario.py` **re-runs preflight** on the source; if any preflight error is reported it **does not write** the load file (exit code 2).
 
@@ -419,7 +442,7 @@ Shared mutable state: **`cmo.state`** (`spawned_air_missions`, strike mission na
 1. One **Strike** mission as the **strike package** — aircraft and naval TLAM shooters share it via `setup_csg_strike_on_air_strike`.
 2. **CSG formation:** `form_csg_group(CSG_GROUP, cvn, {ddg, cg, …})` — escorts stay grouped; strike assets are assigned to the package mission in formation.
 3. Spawn strike aircraft, assign targets; `configure_strike_mission_options` **before** spawn.
-4. **Hardcoded schedule block** (after OOB): SEAD/ISR `set_patrol_on_station_schedule` (on-station), strike `set_strike_tot_schedule` (flight plan + wrapper TOT, fatal verify), then `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW → `setup_csg_strike_on_air_strike` → final `set_strike_tot_schedule` wrapper reassert.
+4. **Hardcoded schedule block** (after OOB): SEAD/ISR `set_patrol_on_station_schedule` (on-station), strike `set_strike_tot_schedule` (flight plan + wrapper TOT, fatal verify), then `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW → `setup_csg_strike_on_air_strike` → final `set_strike_tot_schedule` wrapper reassert. If ISR/AEW must be **airborne at H-hour**, spawn first flight on-orbit (no `base`) and re-apply position after this block — see `scenario_bootstrap_reference.md` *Support already on-orbit at scenario start*.
 5. `finalize_strike_air_after_flight_plan()` → carrier CAP/AEW `SetMission` (after SEAD time) → `setup_csg_strike_on_air_strike(CSG_GROUP, {cvn, ddg, cg, …})` (unify naval strike assets) → `restore_all_spawned_air_assignments()` → `add_strike_assign_restore_event()` for Play.
 6. Preflight must pass **Strike TOT reachability** and **SEAD flight size** before you treat times as final.
 

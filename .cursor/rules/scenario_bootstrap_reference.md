@@ -7,7 +7,7 @@ Implementation: **`scripts/scenario_bootstrap.lua`**. Scenarios call helpers as 
 1. Write **`generated/src/<scenario>_src.lua`** using `cmo.*` (see setup below).
 2. Player briefing (English, sidecar only — **not** inline in Lua): **`generated/src/<scenario>_briefing.txt`** (+ auto-synced `.html`). See **`skills_cmo.md` §10**.
 3. Preflight: `python scripts/validate_scenario.py generated/src/<scenario>_src.lua ...`
-4. Build CMO file: `python scripts/generate_scenario.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**
+4. **Build CMO file (mandatory after every src edit):** `python scripts/generate_scenario.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**. The agent runs this — do not leave it to the user. Source changes are invisible in CMO until this step succeeds.
 5. Load **`generated/<scenario>.lua`** in CMO (never load `*_src.lua`).
 
 ### Player briefing files (`*_briefing.txt` + `*_briefing.html`)
@@ -99,7 +99,7 @@ cmo.configure_strike_timing({
 | `mission_schedule_date('2026/06/01')` | → `'2026.06.01'` |
 | `mission_schedule_datetime(date, '06:30:00')` | CMO datetime string |
 | `minutes_from_hms` / `hms_from_minutes` / `hms_subtract_minutes` | Clock math for ISR→SEAD sequencing |
-| `add_mission_schedule_restore_event(opts)` | ScenLoaded + Time — re-apply starttime/TakeOffTime at Play |
+| `add_mission_schedule_restore_event(opts)` | ScenLoaded + Time — re-apply on-station or takeoff schedule at Play. `restore_times` = list of **absolute** `HH:MM:SS` on `start_date` (not offset from H-hour); use `scenario_start + 5s` when H-hour ≠ `00:00:00`. Optional `extra_script` (appended on `station_hms` / `takeoff_hms` trigger only). |
 
 ### Spawn
 
@@ -192,6 +192,30 @@ Use these in scenarios — do not reimplement schedule logic ad hoc.
 
 `configure_strike_timing` without `naval_mission`; skip naval TLAM steps.
 
+### Support already on-orbit at scenario start (ISR / AEW demo)
+
+Use when `on_station == scenario_start_time` and the first sortie must be **airborne at Play**, not on deck.
+
+1. Create Support mission + zone RPs; `set_patrol_on_station_schedule` with `takeoff_time_hms = scenario_start_time`, `transit_minutes = 0`, `flight_size = 1`, `min_aircraft_req = 1`, `on_deactivate_unassign = false`.
+2. **First flight** — spawn without base at orbit (not `spawn_air_wing`):
+
+```lua
+local u = ScenEdit_AddUnit({
+    type = 'Air', side = side, unitname = 'Triton #1', dbid = 2846, loadoutid = 13986,
+    latitude = isr_lat, longitude = isr_lon, altitude = 50000,
+    mission = 'Caribbean ISR Orbit',
+})
+ScenEdit_SetUnit({ guid = u.guid, throttle = 'Cruise', timetoready_minutes = 0 })
+-- track in spawned_air_missions + assign_air_to_mission (or local helper mirroring add_air_unit_checked)
+```
+
+3. **Relief pool** — `cmo.add_air_unit_checked(..., 'Triton #2', …, base_guid, …)` for `#2…#N` (carrier or land base).
+4. After **all** schedule / strike / `restore_all_spawned_air_assignments` calls, re-`SetUnit` orbit position on first-flight GUIDs.
+5. Register Play events (`ScenLoaded` + `Time` at `03:00:05` if H-hour is `03:00:00`) with `launch=true` on those GUIDs. Set `restore_times` on `add_mission_schedule_restore_event` to match H-hour + 5s, not `00:00:05`.
+6. Regenerate (agent — after every src change): `python scripts/generate_scenario.py generated/src/<name>_src.lua`.
+
+Reference implementation: `generated/src/cuba_pressure_2026_demo_src.lua`.
+
 ---
 
 ## Init log prefixes (`skills_cmo.md` §6)
@@ -213,3 +237,6 @@ End scenarios with a Strike TOT summary line when applicable.
 - **`SetMission` on strike package after aircraft assigned** clears the package — configure options before spawn; TOT via `CreateMissionFlightPlan`.
 - **Naval TLAM:** `setup_csg_strike_on_air_strike` keeps ships in CSG; `set_naval_strike_schedule` after assign.
 - **SEAD** = Patrol type `SEAD`, not Strike; set `starttime`/`TakeOffTime` before strike TOT.
+- **Hosted aircraft “teleport”:** `SetUnit` lat/lon/altitude on units with `base=` does not make them airborne — spawn on-orbit flights without `base`, or use `launch=true` at Play.
+- **Support `FlightSize` for single on-station + pool:** `FlightSize=1`, `MinAircraftReq=1`, `OnDeactivateUassign=false` when N aircraft rotate one orbit (ISR/AEW).
+- **`restore_times`:** absolute `HH:MM:SS` on scenario date — align first entry with `scenario_start_time + 5s` when H-hour is not midnight.
