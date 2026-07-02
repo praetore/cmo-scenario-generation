@@ -232,12 +232,14 @@ def _validate_csg_formation(content, air_carrier_vars):
             )
 
     if _CSG_STRIKE_SHIP_VAR in placed_csg:
+        allowed_strike_missions = _csg_allowed_ship_strike_missions(content)
+        tlam_example = _resolve_tlam_strike_mission(content) or "TLAM Strike"
         striker_missions = patrol_assigns.get(_CSG_STRIKE_SHIP_VAR, [])
         for mission in striker_missions:
-            if mission.lower() not in _CSG_ALLOWED_SHIP_STRIKE_MISSIONS:
+            if mission.lower() not in allowed_strike_missions:
                 errors.append(
                     f"CSG formation: '{_CSG_STRIKE_SHIP_VAR}' on '{mission}' — use a separate timed "
-                    "Strike (e.g. Caribbean TLAM Salvo) while the ship stays in the CSG group."
+                    f"Strike (e.g. {tlam_example}) while the ship stays in the CSG group."
                 )
         striker_on_tlam = bool(
             re.search(_CSG_TLAM_SHIP_ASSIGN_CALL, scenario_body, re.IGNORECASE)
@@ -679,8 +681,11 @@ def _validate_strike_tot_synchronization(content, mission_map):
     strike_pkg = next((p for p in packages if p.get("mission")), packages[0] if packages else {})
     naval_pkgs = _parse_naval_package_annotations(content)
     naval_pkg = naval_pkgs[0] if naval_pkgs else {}
-    air_strike_name = strike_pkg.get("mission") or "Caribbean Thunder Strike"
-    tlam_mission = naval_pkg.get("mission") or "Caribbean TLAM Salvo"
+    air_strike_name = (
+        _resolve_strike_air_mission(content)
+        or strike_pkg.get("mission")
+    )
+    tlam_mission = _resolve_tlam_strike_mission(content) or naval_pkg.get("mission")
 
     if strike_pkg.get("time") and strike_pkg["time"] != canonical_tot:
         errors.append(
@@ -2175,7 +2180,12 @@ def _validate_air_assign_after_mission_mutations(content):
     strike_m = re.search(
         r"local\s+STRIKE_AIR_MISSION\s*=\s*'([^']+)'", scenario_body, re.IGNORECASE
     )
-    strike_name = strike_m.group(1) if strike_m else "Caribbean Thunder Strike"
+    strike_name = strike_m.group(1) if strike_m else _resolve_strike_air_mission(content)
+    if not strike_name:
+        warnings.append(
+            "Air assignment: no STRIKE_AIR_MISSION local — carrier strike name checks skipped."
+        )
+        return errors, warnings, ok
 
     if not re.search(r"finalize_strike_air_after_flight_plan\s*\(", scenario_body, re.IGNORECASE):
         errors.append(
@@ -3029,32 +3039,37 @@ def _validate_isr_before_sead(content):
         )
 
     schedule = _parse_mission_schedule_settings(content)
-    isr_sched = (
-        schedule.get("Caribbean ISR West")
-        or schedule.get("Caribbean ISR Orbit")
-        or {}
-    )
+    isr_missions = _parse_isr_mission_names(content)
+    isr_primary = isr_missions[0] if isr_missions else None
+    isr_label = isr_primary or "primary ISR mission"
+    isr_sched = (schedule.get(isr_primary) or {}) if isr_primary else {}
+    sead_shooters, sead_escorts = _parse_sead_mission_names(content)
+    sead_check_missions = sead_shooters + sead_escorts + ["SEAD Escort CAP"]
     sead_sched_any = any(
-        (schedule.get(m) or {}).get("time_on_target")
-        for m in (
-            "Wild Weasel SEAD West",
-            "Wild Weasel SEAD East",
-            "SEAD Escort West",
-            "SEAD Escort East",
-            "SEAD Escort CAP",
+        (schedule.get(m) or {}).get("time_on_target") for m in sead_check_missions
+    )
+    has_isr_schedule_call = bool(
+        re.search(
+            r"set_patrol_on_station_schedule\s*\([^)]*ISR_(?:WEST|EAST)_MISSION",
+            content,
+            re.IGNORECASE,
+        )
+        or (
+            isr_primary
+            and re.search(
+                rf"set_patrol_on_station_schedule\s*\([^)]*{re.escape(isr_primary)}",
+                content,
+                re.IGNORECASE,
+            )
         )
     )
-    if isr_sched.get("time_on_target") or re.search(
-        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR (West|Orbit)",
-        content,
-        re.IGNORECASE,
-    ):
+    if isr_sched.get("time_on_target") or has_isr_schedule_call:
         ok.append(
             f"OK: ISR before SEAD — ISR on-station {isr_station} Z ({recon} min recon before SEAD on-station {sead_station})."
         )
     else:
         warnings.append(
-            f"ISR timing: Caribbean ISR West/Orbit has no TimeOnTargetStation — drone may launch at H-hour."
+            f"ISR timing: {isr_label} has no TimeOnTargetStation — drone may launch at H-hour."
         )
 
     if sead_sched_any or re.search(
@@ -3101,10 +3116,15 @@ def _validate_isr_before_sead(content):
                 f"{growler_count * 4} Growlers."
             )
 
-    sead_hold = re.search(
-        r"Wild Weasel SEAD West[\s\S]{0,400}?weapon_control_status_land\s*=\s*2",
-        content,
-        re.IGNORECASE,
+    sead_hold_mission = sead_shooters[0] if sead_shooters else None
+    sead_hold = (
+        re.search(
+            rf"{re.escape(sead_hold_mission)}[\s\S]{{0,400}}?weapon_control_status_land\s*=\s*2",
+            content,
+            re.IGNORECASE,
+        )
+        if sead_hold_mission
+        else None
     )
     if sead_hold:
         ok.append("OK: SEAD land WCS HOLD until on-station — no HARM fires before ISR recon window.")
@@ -3298,7 +3318,7 @@ def _validate_refuel_doctrine_sanity(content, assignments, mission_map, db, seri
         if carrier_strike >= 12 and tanker_count <= 2:
             warnings.append(
                 f"AAR doctrine: mission '{mission_name}' sends {carrier_strike}+ carrier-based "
-                "strikers/escorts to tankers — usually unnecessary within ~400 nm of Cuba; "
+                "strikers/escorts to tankers — usually unnecessary within regional strike range; "
                 "set use_refuel_unrep='No_No' and fuel_state_rtb='Bingo' so excess aircraft RTB."
             )
     return errors, warnings, ok
@@ -3361,12 +3381,13 @@ def _validate_naval_strike_launch_timing(content, mission_map, ships):
                 == strike_pkg["mission"].strip().lower()
             )
         )
+        tlam_example = _resolve_tlam_strike_mission(content) or "TLAM Strike"
         if air_on_mission > 0 and mission_fps and not unified_air_tlam:
             errors.append(
                 f"Naval strike timing: '{label}' on Strike '{mission}' shares the mission with "
                 f"{air_on_mission} aircraft and CreateMissionFlightPlan — Tomahawks launch at "
                 "scenario start while air sorts to TOT. Move the cruiser to a separate timed "
-                "Strike (e.g. Caribbean TLAM Salvo) with starttime and TimeOnTargetStation."
+                f"Strike (e.g. {tlam_example}) with starttime and TimeOnTargetStation."
             )
             continue
         if air_on_mission > 0 and mission_fps and unified_air_tlam:

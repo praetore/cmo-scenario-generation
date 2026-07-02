@@ -59,12 +59,7 @@ _CSG_ESCORT_VARS = ("ddg51", "ddg51_escort")
 
 _CSG_PATROL_MISSION = "csg station keeping"
 
-_CSG_ALLOWED_SHIP_STRIKE_MISSIONS = (
-    "caribbean tlam salvo",
-    "caribbean thunder strike",
-    "tlam strike",
-    "caribbean thunder",
-)
+# Allowed CSG ship strike missions are resolved per-scenario via _csg_allowed_ship_strike_missions().
 
 _CSG_SHIP_MISSIONS_BREAKING_FORMATION = (
     "csg asw screen",

@@ -1680,10 +1680,8 @@ def _parse_ship_strike_assignments(content, mission_map):
     air_m = re.search(
         r"local\s+STRIKE_AIR_MISSION\s*=\s*'([^']+)'", content, re.IGNORECASE
     )
-    tlam_name = (
-        tlam_m.group(1)
-        if tlam_m
-        else (air_m.group(1) if air_m else "Caribbean TLAM Salvo")
+    tlam_name = _resolve_tlam_strike_mission(content) or (
+        air_m.group(1) if air_m else None
     )
     scenario_only = content.split("-- [preflight: scenario_bootstrap.lua]")[0]
     csg_strike_inline = re.search(
@@ -1757,6 +1755,19 @@ def _parse_annotation_kv_blob(blob):
         "minutes_before_strike_tot",
         "launch",
         "tot",
+        "name",
+        "packages",
+        "on_station",
+        "recon_min",
+        "transit_min",
+        "drones",
+        "west",
+        "east",
+        "before_sead_on_station",
+        "escort_on_station",
+        "escort_per_zone",
+        "escort_flight_size",
+        "escort_min_aircraft",
     )
     key_pattern = "|".join(known_keys)
     for match in re.finditer(rf"({key_pattern})=([^#]+?)(?=\s+(?:{key_pattern})=|$)", blob):
@@ -1784,6 +1795,126 @@ def _parse_sead_package_annotations(content):
         blob = line.split("@sead_package", 1)[-1]
         packages.append(_parse_annotation_kv_blob(blob))
     return packages
+
+def _parse_task_pool_annotations(content):
+    """@task_pool — strike task pool name and child package list."""
+    for line in content.splitlines():
+        if "@task_pool" not in line.lower():
+            continue
+        blob = line.split("@task_pool", 1)[-1]
+        return _parse_annotation_kv_blob(blob)
+    return {}
+
+def _parse_isr_package_annotations(content):
+    """@isr_package — ISR on-station timing and mission name(s)."""
+    packages = []
+    for line in content.splitlines():
+        if "@isr_package" not in line.lower():
+            continue
+        blob = line.split("@isr_package", 1)[-1]
+        packages.append(_parse_annotation_kv_blob(blob))
+    return packages
+
+def _parse_lua_local_string(content, var_name):
+    match = re.search(
+        rf"local\s+{re.escape(var_name)}\s*=\s*'([^']*)'",
+        content,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+def _parse_lua_string_list(content, var_name):
+    match = re.search(
+        rf"local\s+{re.escape(var_name)}\s*=\s*\{{([^}}]+)\}}",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+    return re.findall(r"'([^']+)'", match.group(1))
+
+def _parse_isr_mission_names(content):
+    """ISR patrol mission names from locals or @isr_package (supports West+East combined)."""
+    west = _parse_lua_local_string(content, "ISR_WEST_MISSION")
+    east = _parse_lua_local_string(content, "ISR_EAST_MISSION")
+    names = [m for m in (west, east) if m]
+    if names:
+        return names
+    for pkg in _parse_isr_package_annotations(content):
+        mission = (pkg.get("mission") or "").strip()
+        if not mission:
+            continue
+        parts = [p.strip() for p in re.split(r"\s*\+\s*", mission) if p.strip()]
+        if parts:
+            return parts
+    return []
+
+def _parse_sead_mission_names(content):
+    """SEAD shooter and escort mission names from locals or @sead_package."""
+    shooters = _parse_lua_string_list(content, "sead_shooter_missions")
+    escorts = _parse_lua_string_list(content, "sead_escort_missions")
+    if not shooters:
+        timed = _parse_lua_string_list(content, "sead_timed_missions")
+        if timed:
+            shooters = timed
+    if not shooters:
+        for pkg in _parse_sead_package_annotations(content):
+            missions = (pkg.get("missions") or "").strip()
+            if missions:
+                shooters = [m.strip() for m in missions.split(",") if m.strip()]
+                break
+    if not escorts:
+        escorts = _parse_lua_string_list(content, "sead_escort_missions")
+    return shooters, escorts
+
+def _resolve_strike_air_mission(content):
+    name = _parse_lua_local_string(content, "STRIKE_AIR_MISSION")
+    if name:
+        return name
+    _, waves = _parse_strike_package_annotations(content)
+    for wave in waves:
+        if wave.get("role") == "air_strike" and wave.get("mission"):
+            return wave["mission"]
+    packages, _ = _parse_strike_package_annotations(content)
+    for pkg in packages:
+        mission = pkg.get("mission") or ""
+        if mission and "carrier" in mission.lower():
+            return mission
+    if packages:
+        return packages[0].get("mission")
+    return None
+
+def _resolve_tlam_strike_mission(content):
+    name = _parse_lua_local_string(content, "TLAM_STRIKE_MISSION")
+    if name:
+        return name
+    naval = _parse_naval_package_annotations(content)
+    if naval and naval[0].get("mission"):
+        return naval[0]["mission"]
+    _, waves = _parse_strike_package_annotations(content)
+    for wave in waves:
+        if wave.get("role") == "naval_strike" and wave.get("mission"):
+            return wave["mission"]
+    return None
+
+def _resolve_strike_taskpool(content):
+    name = _parse_lua_local_string(content, "STRIKE_TASKPOOL")
+    if name:
+        return name
+    pool = _parse_task_pool_annotations(content)
+    return pool.get("name")
+
+def _csg_allowed_ship_strike_missions(content):
+    """Strike missions a CSG escort may use while remaining in formation (from scenario locals/annotations)."""
+    allowed = set()
+    for name in (
+        _resolve_tlam_strike_mission(content),
+        _resolve_strike_taskpool(content),
+        _resolve_strike_air_mission(content),
+    ):
+        if name:
+            allowed.add(name.lower())
+    return allowed
 
 def _parse_strike_package_annotations(content):
     """@strike_package / @strike_wave comment metadata (generic, no fixed DBIDs)."""
@@ -1845,11 +1976,13 @@ def _expand_lua_datetime_vars(vars_map):
         ("isr_launch_time", "isr_launch_dt"),
         ("aew_launch_time", "aew_launch_dt"),
         ("cap_launch_time", "cap_launch_dt"),
-        ("scenario_start_time", "cuba_mission_start_dt"),
     ):
         hhmm = expanded.get(time_key)
         if date and hhmm:
             expanded[dt_key] = f"{date} {hhmm}"
+    for key, val in expanded.items():
+        if key.endswith("_mission_start") and date and val:
+            expanded.setdefault("defender_mission_start_dt", f"{date} {val}")
     return expanded
 
 def _resolve_lua_datetime_token(token, lua_vars):
@@ -1863,7 +1996,7 @@ def _resolve_lua_datetime_token(token, lua_vars):
     return lua_vars.get(token.lower())
 
 def _resolve_lua_mission_name(name, lua_vars):
-    """Map TLAM_STRIKE_MISSION-style locals to 'Caribbean TLAM Salvo'."""
+    """Resolve mission token (literal or local var like STRIKE_AIR_MISSION)."""
     if not name:
         return name
     bare = name.strip().strip("'\"")
@@ -1988,16 +2121,34 @@ def _parse_isr_on_station_schedule(content):
     isr_station_m = re.search(
         r"local\s+isr_on_station_time\s*=\s*'([^']+)'", content, re.IGNORECASE
     )
-    if not (date and isr_station_m):
+    isr_missions = _parse_isr_mission_names(content)
+    if not (date and isr_station_m and isr_missions):
         return {}
-    if not re.search(
-        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR (West|Orbit)",
-        content,
-        re.IGNORECASE,
-    ):
+    has_isr_schedule = bool(
+        re.search(
+            r"set_patrol_on_station_schedule\s*\([^)]*ISR_WEST_MISSION",
+            content,
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"set_patrol_on_station_schedule\s*\([^)]*ISR_EAST_MISSION",
+            content,
+            re.IGNORECASE,
+        )
+    )
+    if not has_isr_schedule:
+        primary = isr_missions[0]
+        has_isr_schedule = bool(
+            re.search(
+                rf"set_patrol_on_station_schedule\s*\([^)]*{re.escape(primary)}",
+                content,
+                re.IGNORECASE,
+            )
+        )
+    if not has_isr_schedule:
         return {}
     station = isr_station_m.group(1)
-    mission = "Caribbean ISR West" if "Caribbean ISR West" in content else "Caribbean ISR Orbit"
+    mission = isr_missions[0]
     return {mission: {"time_on_target": f"{date} {station}"}}
 
 def _parse_bootstrap_naval_schedule(content):
@@ -2016,16 +2167,9 @@ def _parse_bootstrap_naval_schedule(content):
         re.IGNORECASE,
     ):
         return {}
-    mission = None
-    m = re.search(r"local\s+TLAM_STRIKE_MISSION\s*=\s*'([^']+)'", content, re.IGNORECASE)
-    if m:
-        mission = m.group(1)
+    mission = _resolve_tlam_strike_mission(content)
     if not mission:
-        naval_pkgs = _parse_naval_package_annotations(content)
-        if naval_pkgs:
-            mission = naval_pkgs[0].get("mission")
-    if not mission:
-        mission = "Caribbean TLAM Salvo"
+        return {}
     tot_dt = f"{date} {tot}"
     row = {"time_on_target": tot_dt}
     if launch:
@@ -2093,7 +2237,7 @@ def _parse_sead_timed_mission_loop(content):
     return {}
 
 def _parse_naval_timed_mission_loop(content):
-    """ScenEdit_SetMission for Caribbean TLAM Salvo-style blocks with tlam_launch_dt."""
+    """ScenEdit_SetMission for timed naval strike blocks with tlam_launch_dt."""
     date = _parse_strike_package_date(content)
     launch_m = re.search(r"local\s+tlam_launch_time\s*=\s*'([^']+)'", content, re.IGNORECASE)
     tot_m = re.search(r"local\s+strike_package_tot\s*=\s*'([^']+)'", content, re.IGNORECASE)
