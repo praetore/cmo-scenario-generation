@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from cmo_config import format_config_setup_hint, resolve_db_dir
+from preflight_bootstrap_event_scripts import validate_bootstrap_event_scripts
 from preflight_luacheck import install_luacheck_local, luacheck_exe_path, REPO_ROOT
 from cmo_db import format_database_layout_message, open_db, resolve_source_db
 from preflight_checks import *
@@ -53,8 +54,12 @@ def _ensure_luacheck_bin():
     return _resolve_luacheck_bin(), notes
 
 
-def _run_luacheck(scenario_path):
-    """Run luacheck for static Lua preflight."""
+def _run_luacheck(paths):
+    """Run luacheck for static Lua preflight (one path or a list)."""
+    if isinstance(paths, (str, Path)):
+        paths = [str(paths)]
+    else:
+        paths = [str(p) for p in paths]
     luacheck_bin, install_notes = _ensure_luacheck_bin()
     if not luacheck_bin:
         warnings = [
@@ -70,7 +75,7 @@ def _run_luacheck(scenario_path):
             ]
         return {"errors": [], "warnings": warnings, "ok": []}
 
-    # Repo .luacheckrc: lua_version = "5.3" (CMO runtime). Trailing '--' keeps the file path
+    # Repo .luacheckrc: lua_version = "5.3" (CMO runtime). Trailing '--' keeps file paths
     # separate from luacheck options.
     luacheck_config = REPO_ROOT / ".luacheckrc"
     cmd = [
@@ -81,7 +86,7 @@ def _run_luacheck(scenario_path):
         "--ranges",
         "--no-color",
         "--",
-        scenario_path,
+        *paths,
     ]
     try:
         proc = subprocess.run(
@@ -125,6 +130,10 @@ def validate_scenario_air_loadouts(
     if not path.exists():
         return {"errors": [f"Scenario file not found: {scenario_path}"], "warnings": [], "ok": []}
     lint_report = _run_luacheck(str(path))
+    bootstrap_lint = validate_bootstrap_event_scripts(_run_luacheck)
+    lint_report["errors"].extend(bootstrap_lint["errors"])
+    lint_report["warnings"].extend(bootstrap_lint["warnings"])
+    lint_report["ok"].extend(bootstrap_lint["ok"])
 
     if series and version and not db_path:
         source_path = resolve_source_db(series, version)

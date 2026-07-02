@@ -4,6 +4,9 @@
 
 local M = {}
 
+-- Bump when Play-time event ScriptText changes so stale ScenEdit actions are replaced on re-run.
+M.EVENT_SCRIPT_REV = 'b5'
+
 M.state = {
     BASE_FACILITY_DBID = 1995,
     spawned_air_missions = {},
@@ -12,10 +15,13 @@ M.state = {
     strike_package_date = nil,
     strike_package_tot = nil,
     tlam_launch_time = nil,
+    scenario_start_time = nil,
+    play_refresh_time = nil,
     STRIKE_AIR_MISSION = nil,
     TLAM_STRIKE_MISSION = nil,
     STRIKE_TASKPOOL = nil,
     CALCM_STRIKE_PACKAGE = nil,
+    calcm_strike_packages = nil,
     strike_air_packages = nil,
     strike_mission_names = {},
     scenario_year = nil,
@@ -59,21 +65,41 @@ function M.configure_strike_timing(cfg)
     M.state.STRIKE_TASKPOOL = cfg.task_pool or M.state.STRIKE_TASKPOOL
     M.state.STRIKE_AIR_MISSION = cfg.air_mission or cfg.carrier_package or M.state.STRIKE_AIR_MISSION
     M.state.CALCM_STRIKE_PACKAGE = cfg.calcm_package or M.state.CALCM_STRIKE_PACKAGE
+    M.state.calcm_strike_packages = cfg.calcm_packages or M.state.calcm_strike_packages
+    if M.state.calcm_strike_packages and #M.state.calcm_strike_packages > 0 then
+        M.state.CALCM_STRIKE_PACKAGE = M.state.calcm_strike_packages[1]
+    end
     M.state.TLAM_STRIKE_MISSION = cfg.naval_mission or cfg.tlam_package or M.state.TLAM_STRIKE_MISSION
     M.state.strike_side = cfg.side or M.state.strike_side
     M.state.strike_air_packages = nil
+    local split_calcm = M.state.calcm_strike_packages and #M.state.calcm_strike_packages > 0
     if M.state.STRIKE_TASKPOOL then
         M.register_strike_mission(M.state.STRIKE_TASKPOOL)
         M.state.strike_air_packages = {}
         if M.state.STRIKE_AIR_MISSION then
             table.insert(M.state.strike_air_packages, M.state.STRIKE_AIR_MISSION)
         end
-        if M.state.CALCM_STRIKE_PACKAGE then
+        if M.state.CALCM_STRIKE_PACKAGE and not split_calcm then
             table.insert(M.state.strike_air_packages, M.state.CALCM_STRIKE_PACKAGE)
         end
     end
+    if split_calcm then
+        if not M.state.strike_air_packages then
+            M.state.strike_air_packages = {}
+        end
+        for _, pkg_name in ipairs(M.state.calcm_strike_packages) do
+            table.insert(M.state.strike_air_packages, pkg_name)
+            M.register_strike_mission(pkg_name)
+        end
+    end
     M.register_strike_mission(M.state.STRIKE_AIR_MISSION)
-    M.register_strike_mission(M.state.CALCM_STRIKE_PACKAGE)
+    if split_calcm then
+        for _, pkg_name in ipairs(M.state.calcm_strike_packages) do
+            M.register_strike_mission(pkg_name)
+        end
+    else
+        M.register_strike_mission(M.state.CALCM_STRIKE_PACKAGE)
+    end
     M.register_strike_mission(M.state.TLAM_STRIKE_MISSION)
 end
 
@@ -108,6 +134,8 @@ function M.create_strike_task_pool(side, pool_name, opts)
             M.register_strike_mission(pkg_name)
             if pkg.options then
                 M.configure_strike_mission_options(side, pkg_name, pkg.options)
+            else
+                M.configure_strike_mission_options(side, pkg_name, { OnDeactivateUassign = false })
             end
         end
     end
@@ -133,6 +161,54 @@ function M.assign_strike_target(target_guid, pool_name, package_names)
         ScenEdit_AssignUnitAsTarget(target_guid, M.state.TLAM_STRIKE_MISSION)
     end
     return true
+end
+
+function M.assign_strike_target_to_packages(target_guid, package_names)
+    if not target_guid or not package_names then
+        return false
+    end
+    for _, pkg_name in ipairs(package_names) do
+        if pkg_name and pkg_name ~= '' then
+            ScenEdit_AssignUnitAsTarget(target_guid, pkg_name)
+        end
+    end
+    return true
+end
+
+function M.remove_strike_target_from_packages(target_guid, package_names)
+    if not target_guid or not package_names then
+        return false
+    end
+    for _, pkg_name in ipairs(package_names) do
+        if pkg_name and pkg_name ~= '' then
+            ScenEdit_RemoveUnitAsTarget(target_guid, pkg_name)
+        end
+    end
+    return true
+end
+
+-- Standalone strike package (not in task pool). Prefer pool child packages + remove_strike_target_from_packages.
+function M.create_standalone_strike_package(side, pkg_name, opts)
+    opts = opts or {}
+    side = side or M.state.strike_side or 'United States'
+    if not pkg_name or pkg_name == '' then
+        M._abort_scenario_generation('create_standalone_strike_package — pkg_name required')
+    end
+    local pkg_mission = ScenEdit_AddMission(side, pkg_name, 'Strike', {
+        type = opts.type or 'Land',
+        category = 1,
+    })
+    if not pkg_mission then
+        M._abort_scenario_generation('create_standalone_strike_package — failed to add ' .. pkg_name)
+    end
+    M.register_strike_mission(pkg_name)
+    if opts.options then
+        M.configure_strike_mission_options(side, pkg_name, opts.options)
+    else
+        M.configure_strike_mission_options(side, pkg_name, { OnDeactivateUassign = false })
+    end
+    print('OK: Standalone strike package "' .. pkg_name .. '"')
+    return pkg_name
 end
 
 function M.set_task_pool_tot_schedule(side, pool_name, tot_dt, opts)
@@ -180,12 +256,36 @@ function M.hms_subtract_minutes(time_hms, delta_minutes)
     return M.hms_from_minutes(base - (delta_minutes or 0))
 end
 
+function M.hms_add_minutes(time_hms, delta_minutes)
+    local base = M.minutes_from_hms(time_hms)
+    if not base then
+        return time_hms
+    end
+    return M.hms_from_minutes(base + (delta_minutes or 0))
+end
+
+function M.hms_add_seconds(time_hms, delta_seconds)
+    local h, m, s = tostring(time_hms):match('^(%d+):(%d+):(%d+)$')
+    if not h then
+        return time_hms
+    end
+    local total = tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s) + (delta_seconds or 0)
+    total = math.max(0, total)
+    local nh = math.floor(total / 3600) % 24
+    local nm = math.floor((total % 3600) / 60)
+    local ns = math.floor(total % 60)
+    return string.format('%02d:%02d:%02d', nh, nm, ns)
+end
+
 -- scenario_date 'YYYY/MM/DD' → ScenEdit_SetTime (dateformat YYYYMMDD; StartDate DD.MM.YYYY per API)
 function M.scenario_set_start(date_slash, time_hms)
     local y, m, d = date_slash:match('^(%d+)/(%d+)/(%d+)$')
     if not y then
         M._abort_scenario_generation('scenario_set_start — bad date ' .. tostring(date_slash) .. ' (want YYYY/MM/DD)')
     end
+    M.state.scenario_start_time = time_hms
+    M.state.scenario_start_date = date_slash
+    M.state.play_refresh_time = M.hms_add_seconds(time_hms, 5)
     ScenEdit_SetTime({
         dateformat = 'YYYYMMDD',
         date = M.mission_schedule_date(date_slash),
@@ -417,11 +517,29 @@ function M.assign_ship_to_mission(side, ship_unit, mission_name, group_name)
     return done(assigned())
 end
 
+function M._unit_is_airborne(unit)
+    if not unit then
+        return false
+    end
+    local alt = tonumber(unit.altitude) or 0
+    return alt >= 50
+end
+
+function M._skip_spawn_refresh(entry)
+    if entry.on_orbit then
+        return true
+    end
+    local u = ScenEdit_GetUnit({ guid = entry.guid })
+    return M._unit_is_airborne(u)
+end
+
 function M.refresh_spawned_air_assignments(mission_filter)
     local ok_n, fail_n = 0, 0
     for _, entry in ipairs(M.state.spawned_air_missions) do
         if not mission_filter or entry.mission == mission_filter then
-            if M.assign_air_to_mission(entry.side, entry.guid, entry.name, entry.mission, entry.escort) then
+            if M._skip_spawn_refresh(entry) then
+                ok_n = ok_n + 1
+            elseif M.assign_air_to_mission(entry.side, entry.guid, entry.name, entry.mission, entry.escort) then
                 ok_n = ok_n + 1
             else
                 fail_n = fail_n + 1
@@ -1093,7 +1211,8 @@ end
 
 M.disable_strike_guns_on_unit = M.configure_strike_ship_weapon_policy
 
-function M.build_strike_ship_weapon_policy_script(ship_unit)
+function M.build_strike_ship_weapon_policy_script(ship_unit, opts)
+    opts = opts or {}
     if not ship_unit or not ship_unit.guid then
         return ''
     end
@@ -1106,15 +1225,19 @@ function M.build_strike_ship_weapon_policy_script(ship_unit)
     for _, t in ipairs(M.SURFACE_SELF_DEFENSE_WRA_TARGET_TYPES) do
         table.insert(surface_types, "'" .. M._q_lua_str(t) .. "'")
     end
+    local doctrine_fields = "weapon_state_planned='ShotgunBVR', weapon_state_rtb='Winchester', engage_opportunity_targets=false, gun_strafing=0, weapon_control_status_surface=0, weapon_control_status_subsurface=0"
+    if opts.land_hold then
+        doctrine_fields = doctrine_fields .. ', weapon_control_status_land=0'
+    end
     return table.concat({
         'do',
         "  local u = ScenEdit_GetUnit({guid='" .. guid .. "'})",
-        '  if not u or not u.mounts then break end',
+        '  if u and u.mounts then',
         '  local wra_land = { "none", "none", "none", "none" }',
         '  local wra_surface = { "inherit", "inherit", "none", "max" }',
         '  local land_types = { ' .. table.concat(land_types, ', ') .. ' }',
         '  local surface_types = { ' .. table.concat(surface_types, ', ') .. ' }',
-        "  ScenEdit_SetDoctrine({side='" .. side .. "', guid='" .. guid .. "'}, {weapon_state_planned='ShotgunBVR', weapon_state_rtb='Winchester', engage_opportunity_targets=false, gun_strafing=0, weapon_control_status_surface=0, weapon_control_status_subsurface=0})",
+        "  ScenEdit_SetDoctrine({side='" .. side .. "', guid='" .. guid .. "'}, {" .. doctrine_fields .. "})",
         '  for _, mount in ipairs(u.mounts) do',
         '    local mn = mount.name and string.upper(tostring(mount.name)) or ""',
         '    local is_gun = false',
@@ -1135,12 +1258,105 @@ function M.build_strike_ship_weapon_policy_script(ship_unit)
         '      end',
         '    end',
         '  end',
+        '  end',
         'end',
     }, '\r\n')
 end
 
 M.build_tlam_shooter_weapon_policy_script = M.build_strike_ship_weapon_policy_script
 M.build_disable_strike_guns_script = M.build_strike_ship_weapon_policy_script
+
+function M.build_tlam_post_salvo_release_script(ship_unit, opts)
+    opts = opts or {}
+    if not ship_unit or not ship_unit.guid then
+        return ''
+    end
+    local side = M._q_lua_str(M.state.strike_side or 'United States')
+    local guid = ship_unit.guid
+    local lines = {
+        "pcall(function() ScenEdit_SetUnit({guid='" .. guid .. "', side='" .. side .. "', mission='none'}) end)",
+    }
+    local group_name = opts.group_name
+    if group_name and group_name ~= '' then
+        table.insert(lines, "pcall(function() ScenEdit_SetUnit({guid='" .. guid .. "', side='" .. side ..
+            "', group='" .. M._q_lua_str(group_name) .. "'}) end)")
+    end
+    local gun_script = M.build_strike_ship_weapon_policy_script(ship_unit, { land_hold = true })
+    if gun_script ~= '' then
+        table.insert(lines, gun_script)
+    end
+    table.insert(lines, "print('OK: TLAM post-salvo — " .. M._q_lua_str(tostring(ship_unit.name or guid)) .. " off strike, guns held')")
+    return table.concat(lines, '\r\n')
+end
+
+function M.add_tlam_post_salvo_release_event(ship_units, opts)
+    opts = opts or {}
+    local ship_list = {}
+    for _, ship_unit in ipairs(ship_units or {}) do
+        if ship_unit and ship_unit.guid then
+            ship_list[#ship_list + 1] = ship_unit
+        end
+    end
+    if #ship_list == 0 then
+        return false
+    end
+    local release_hms = opts.release_time
+    if not release_hms then
+        release_hms = M.hms_add_minutes(M.state.strike_package_tot or '00:30:00', 20)
+    end
+    local rev = M.EVENT_SCRIPT_REV or 'b2'
+    local base_label = opts.event_name or 'TLAM post-salvo release'
+    local base_event = base_label .. ' [' .. rev .. ']'
+    local start_date = opts.start_date or M.state.strike_package_date
+    local script_lines = {}
+    for _, ship_unit in ipairs(ship_list) do
+        local part = M.build_tlam_post_salvo_release_script(ship_unit, {
+            group_name = opts.group_name,
+        })
+        if part ~= '' then
+            script_lines[#script_lines + 1] = part
+        end
+    end
+    if #script_lines == 0 then
+        return false
+    end
+    local script = table.concat(script_lines, '\r\n')
+
+    for _, legacy_base in ipairs({ base_label, base_event }) do
+        for _, suffix in ipairs({ '', ' (time)' }) do
+            local label = legacy_base .. suffix
+            pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+            pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+            pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+        end
+    end
+
+    local release_dt = M.mission_schedule_datetime(start_date, release_hms)
+    local action_name = base_event .. ' action'
+    ScenEdit_SetTrigger({
+        mode = 'add',
+        type = 'Time',
+        name = base_event .. ' trigger',
+        Time = release_dt,
+    })
+    ScenEdit_SetAction({
+        mode = 'add',
+        type = 'LuaScript',
+        name = action_name,
+        ScriptText = script,
+    })
+    ScenEdit_SetEvent(base_event, {
+        mode = 'add',
+        Description = base_event,
+        IsActive = true,
+        IsRepeatable = false,
+        IsShown = true,
+    })
+    ScenEdit_SetEventTrigger(base_event, { mode = 'add', name = base_event .. ' trigger' })
+    ScenEdit_SetEventAction(base_event, { mode = 'add', name = action_name })
+    print('OK: TLAM post-salvo release — ' .. #ship_list .. ' hull(s) at ' .. release_dt)
+    return true
+end
 
 -- Re-apply strike-ship gun block at Play (mission assign can reset unit WRA / weapon state).
 function M.add_strike_ship_weapon_policy_event(ship_unit, opts)
@@ -1152,27 +1368,34 @@ function M.add_strike_ship_weapon_policy_event(ship_unit, opts)
     if script == '' then
         return false
     end
-    local base_event = opts.event_name or ('Strike ship gun policy ' .. tostring(ship_unit.name or ship_unit.guid))
+    local rev = M.EVENT_SCRIPT_REV or 'b2'
+    local base_label = opts.event_name or ('Strike ship gun policy ' .. tostring(ship_unit.name or ship_unit.guid))
+    local base_event = base_label .. ' [' .. rev .. ']'
     local start_date = opts.start_date or M.state.strike_package_date
     local refresh_times = opts.refresh_times
     if not refresh_times then
-        refresh_times = { '00:00:05' }
+        refresh_times = { M.state.play_refresh_time or '00:00:05' }
         if M.state.tlam_launch_time then
             table.insert(refresh_times, M.state.tlam_launch_time)
         end
+        if M.state.strike_package_tot then
+            table.insert(refresh_times, M.hms_subtract_minutes(M.state.strike_package_tot, 2))
+        end
     end
 
-    for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
-        local label = base_event .. suffix
-        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
-        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
-        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
-    end
-    for i = 1, #refresh_times do
-        local label = base_event .. ' (time ' .. i .. ')'
-        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
-        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
-        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    for _, legacy_base in ipairs({ base_label, base_event }) do
+        for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
+            local label = legacy_base .. suffix
+            pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+            pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+            pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+        end
+        for i = 1, 8 do
+            local label = legacy_base .. ' (time ' .. i .. ')'
+            pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+            pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+            pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+        end
     end
 
     local function register_event(event_label, trigger_name, trigger_def)
@@ -1220,7 +1443,8 @@ end
 
 -- Unify naval strike assets on the package Strike mission (in formation). All TLAM-capable hulls may fire; gun policy per hull.
 -- Function name is historical (STRIKE_AIR_MISSION); concept = strike asset unification, not "CSG joins air strike".
-function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
+function M.setup_csg_strike_on_air_strike(group_name, strike_ships, opts)
+    opts = opts or {}
     if not group_name or group_name == '' then
         M._abort_scenario_generation('setup_csg_strike_on_air_strike — group_name required')
     end
@@ -1242,7 +1466,10 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
                 print('Strike package naval asset: ' .. tostring(ship_unit.name) .. ' → ' .. strike_mission ..
                     ' (group ' .. tostring(group_name) .. ')')
                 M.configure_strike_ship_weapon_policy(ship_unit, { side = side })
-                M.add_strike_ship_weapon_policy_event(ship_unit)
+                M.add_strike_ship_weapon_policy_event(ship_unit, {
+                    refresh_times = opts.gun_policy_refresh_times,
+                    start_date = opts.start_date,
+                })
             else
                 fail_count = fail_count + 1
                 M._abort_scenario_generation('strike package naval assign failed: ' .. tostring(ship_unit.name))
@@ -1266,6 +1493,13 @@ function M.setup_csg_strike_on_air_strike(group_name, strike_ships)
         end
     end
     print('OK: unified strike package — ' .. ok_count .. ' naval asset(s), ' .. fail_count .. ' failed on ' .. strike_mission)
+    if ok_count > 0 and opts.post_salvo_release ~= false then
+        M.add_tlam_post_salvo_release_event(strike_ships, {
+            group_name = group_name,
+            release_time = opts.post_salvo_release_time,
+            start_date = opts.start_date,
+        })
+    end
     return ok_count > 0 and fail_count == 0
 end
 
@@ -1273,10 +1507,19 @@ function M._q_lua_str(s)
     return tostring(s):gsub("'", "\\'")
 end
 
+function M._strike_assign_restore_filter(mission_name)
+    -- CreateMissionFlightPlan / SetMission on one task-pool package clears sibling ORBAT.
+    if M.state.STRIKE_TASKPOOL and M.state.STRIKE_TASKPOOL ~= '' then
+        return nil
+    end
+    return mission_name
+end
+
 function M.finalize_strike_package_after_flight_plan(mission_name)
     mission_name = mission_name or M.state.STRIKE_AIR_MISSION
     local side = M.state.strike_side
     local sched = M.strike_schedule_datetimes()
+    local restore_filter = M._strike_assign_restore_filter(mission_name)
     local m = ScenEdit_GetMission(side, mission_name)
     if m and m.updateWPtimes then
         local ok_wp, err_wp = pcall(function()
@@ -1286,9 +1529,9 @@ function M.finalize_strike_package_after_flight_plan(mission_name)
             print('WARNING: updateWPtimes failed for ' .. tostring(mission_name) .. ': ' .. tostring(err_wp))
         end
     end
-    local ok, fail = M.refresh_spawned_air_assignments(mission_name)
+    local ok, fail = M.refresh_spawned_air_assignments(restore_filter)
     if fail > 0 then
-        ok, fail = M.refresh_spawned_air_assignments(mission_name)
+        ok, fail = M.refresh_spawned_air_assignments(restore_filter)
     end
     print('Air assign after flight plan (' .. tostring(mission_name) .. '): ' .. ok .. ' OK, ' .. fail .. ' failed')
     M.set_strike_tot_schedule(side, mission_name, sched.tot, {
@@ -1296,7 +1539,11 @@ function M.finalize_strike_package_after_flight_plan(mission_name)
         wrapper_only = true,
         verify = true,
     })
-    return ok, fail
+    local ok2, fail2 = M.refresh_spawned_air_assignments(restore_filter)
+    if ok2 > 0 or fail2 > 0 then
+        print('Air assign after TOT wrapper (' .. tostring(mission_name) .. '): ' .. ok2 .. ' OK, ' .. fail2 .. ' failed')
+    end
+    return ok + ok2, fail + fail2
 end
 
 function M.finalize_strike_air_after_flight_plan()
@@ -1306,6 +1553,14 @@ function M.finalize_strike_air_after_flight_plan()
             local ok, fail = M.finalize_strike_package_after_flight_plan(name)
             total_ok = total_ok + (ok or 0)
             total_fail = total_fail + (fail or 0)
+        end
+        if M.state.STRIKE_TASKPOOL and M.state.STRIKE_TASKPOOL ~= '' then
+            local ok, fail = M.refresh_spawned_air_assignments(nil)
+            if ok > 0 or fail > 0 then
+                print('Air assign after task-pool flight plans: ' .. ok .. ' OK, ' .. fail .. ' failed')
+            end
+            total_ok = total_ok + ok
+            total_fail = total_fail + fail
         end
         return total_ok, total_fail
     end
@@ -1336,36 +1591,47 @@ function M.verify_spawned_air_assignments(mission_filter)
 end
 
 -- Play-time: carrier air ops can drop strike ORBAT when CAP/SEAD launch — re-assign via separate events (never SetMission on strike).
+function M._strike_assign_restore_preamble_lines()
+    return {
+        'local function _strike_restore_unit(guid, side, mission, escort)',
+        '  local _u = ScenEdit_GetUnit({guid=guid})',
+        '  if not _u then return end',
+        '  local _m = ScenEdit_GetMission(side, mission)',
+        '  if _m and _m.unitlist then',
+        '    for _, _ug in ipairs(_m.unitlist) do',
+        '      if _ug == guid then return end',
+        '    end',
+        '  end',
+        "  local _ml = tostring(_u.assignedMission or _u.mission or '')",
+        "  if _ml ~= '' and string.find(string.lower(_ml), string.lower(mission), 1, true) then return end",
+        '  local _alt = tonumber(_u.altitude) or 0',
+        '  if _alt > 400 then return end',
+        '  if _alt >= 50 then return end',
+        '  pcall(function() ScenEdit_SetUnit({guid=guid, side=side, mission=mission}) end)',
+        'end',
+        "print('NOTE: Strike assign restore event')",
+    }
+end
+
 function M.build_strike_assign_restore_script(mission_filter)
     mission_filter = mission_filter or M.state.STRIKE_AIR_MISSION
     local side = M.state.strike_side or 'United States'
     local q = M._q_lua_str
-    local lines = { "print('NOTE: Strike assign restore event')" }
+    local lines = M._strike_assign_restore_preamble_lines()
     local count = 0
     for _, entry in ipairs(M.state.spawned_air_missions or {}) do
-        if not mission_filter or entry.mission == mission_filter then
+        if not entry.on_orbit and (not mission_filter or entry.mission == mission_filter) then
             count = count + 1
             local mission = entry.mission
             local entry_side = entry.side or side
             local guid = entry.guid
-            if entry.escort then
-                table.insert(lines,
-                    "ScenEdit_AssignUnitToMission('" .. guid .. "', '" .. q(mission) .. "', true)")
-                if entry.name and entry.name ~= '' then
-                    table.insert(lines,
-                        "ScenEdit_AssignUnitToMission('" .. q(entry.name) .. "', '" .. q(mission) .. "', true)")
-                end
-            else
-                table.insert(lines,
-                    "ScenEdit_AssignUnitToMission('" .. guid .. "', '" .. q(mission) .. "')")
-                if entry.name and entry.name ~= '' then
-                    table.insert(lines,
-                        "ScenEdit_AssignUnitToMission('" .. q(entry.name) .. "', '" .. q(mission) .. "')")
-                end
-                table.insert(lines,
-                    "ScenEdit_SetUnit({guid='" .. guid .. "', side='" .. q(entry_side) ..
-                    "', mission='" .. q(mission) .. "'})")
-            end
+            table.insert(lines, string.format(
+                "_strike_restore_unit('%s', '%s', '%s', %s)",
+                guid,
+                q(entry_side),
+                q(mission),
+                entry.escort and 'true' or 'false'
+            ))
         end
     end
     if count == 0 then
@@ -1410,17 +1676,23 @@ function M.add_mission_schedule_restore_event(opts)
     local restore_times = opts.restore_times or { '00:00:05' }
     local base_event = opts.event_name or 'Mission schedule restore'
     local trigger_hms = (schedule_mode == 'on_station') and station_hms or takeoff_hms
+    local play_wrapper_only = opts.wrapper_only
+    if play_wrapper_only == nil and M.state.STRIKE_TASKPOOL and M.state.STRIKE_TASKPOOL ~= '' then
+        play_wrapper_only = true
+    end
 
     local lines = {}
     for _, mission_name in ipairs(missions) do
         if schedule_mode == 'on_station' and station_hms and station_dt then
-            table.insert(lines, string.format(
-                "ScenEdit_CreateMissionFlightPlan('%s', '%s', {DATEONTARGET='%s', TIMEONTARGET='%s'})",
-                side:gsub("'", "\\'"),
-                mission_name:gsub("'", "\\'"),
-                start_date:gsub("'", "\\'"),
-                station_hms
-            ))
+            if not play_wrapper_only then
+                table.insert(lines, string.format(
+                    "ScenEdit_CreateMissionFlightPlan('%s', '%s', {DATEONTARGET='%s', TIMEONTARGET='%s'})",
+                    side:gsub("'", "\\'"),
+                    mission_name:gsub("'", "\\'"),
+                    start_date:gsub("'", "\\'"),
+                    station_hms
+                ))
+            end
             table.insert(lines, string.format(
                 "ScenEdit_SetMission('%s', '%s', {TimeOnTargetStation='%s', UseFlightSize=true, FlightSize=%d, MinAircraftReq=%d, OnDeactivateUassign=false, isactive=true})",
                 side:gsub("'", "\\'"),
@@ -1513,15 +1785,19 @@ end
 
 function M.add_strike_assign_restore_event(opts)
     opts = opts or {}
+    if M.state.STRIKE_TASKPOOL and M.state.STRIKE_TASKPOOL ~= '' and not opts.force_all_restore_times then
+        opts.restore_times = { M.state.play_refresh_time or '00:00:05' }
+        print('NOTE: Task pool active — strike assign restore at Play start only (OnDeactivateUassign=false on packages)')
+    end
     local mission_filter = opts.mission
     if mission_filter == nil and opts.missions then
-        local lines = { "print('NOTE: Strike assign restore event')" }
+        local lines = M._strike_assign_restore_preamble_lines()
         local count = 0
         for _, mname in ipairs(opts.missions) do
             local part = M.build_strike_assign_restore_script(mname)
             if part ~= '' then
                 for line in part:gmatch('[^\r\n]+') do
-                    if not line:match("^print%('NOTE:") and not line:match("^print%('OK:") then
+                    if line:match('^_strike_restore_unit%(') then
                         table.insert(lines, line)
                         count = count + 1
                     end
@@ -1560,21 +1836,25 @@ end
 
 function M._register_strike_assign_restore_event(script, opts)
     opts = opts or {}
-    local base_event = opts.event_name or 'Strike assign restore'
+    local rev = M.EVENT_SCRIPT_REV or 'b2'
+    local base_label = opts.event_name or 'Strike assign restore'
+    local base_event = base_label .. ' [' .. rev .. ']'
     local start_date = opts.start_date or M.state.strike_package_date
-    local restore_times = opts.restore_times or { '00:00:05' }
+    local restore_times = opts.restore_times or { M.state.play_refresh_time or '00:00:05' }
 
-    for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
-        local label = base_event .. suffix
-        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
-        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
-        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
-    end
-    for i = 1, #restore_times do
-        local label = base_event .. ' (time ' .. i .. ')'
-        pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
-        pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
-        pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+    for _, legacy_base in ipairs({ base_label, base_event }) do
+        for _, suffix in ipairs({ '', ' (load)', ' (time)' }) do
+            local label = legacy_base .. suffix
+            pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+            pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+            pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+        end
+        for i = 1, 12 do
+            local label = legacy_base .. ' (time ' .. i .. ')'
+            pcall(function() ScenEdit_SetEvent(label, { mode = 'remove' }) end)
+            pcall(function() ScenEdit_SetTrigger({ mode = 'remove', name = label .. ' trigger' }) end)
+            pcall(function() ScenEdit_SetAction({ mode = 'remove', name = label .. ' action' }) end)
+        end
     end
 
     local function register_event(event_label, trigger_name, trigger_def)

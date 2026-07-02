@@ -3029,7 +3029,11 @@ def _validate_isr_before_sead(content):
         )
 
     schedule = _parse_mission_schedule_settings(content)
-    isr_sched = schedule.get("Caribbean ISR Orbit") or {}
+    isr_sched = (
+        schedule.get("Caribbean ISR West")
+        or schedule.get("Caribbean ISR Orbit")
+        or {}
+    )
     sead_sched_any = any(
         (schedule.get(m) or {}).get("time_on_target")
         for m in (
@@ -3041,7 +3045,7 @@ def _validate_isr_before_sead(content):
         )
     )
     if isr_sched.get("time_on_target") or re.search(
-        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR Orbit",
+        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR (West|Orbit)",
         content,
         re.IGNORECASE,
     ):
@@ -3050,7 +3054,7 @@ def _validate_isr_before_sead(content):
         )
     else:
         warnings.append(
-            f"ISR timing: Caribbean ISR Orbit has no TimeOnTargetStation — drone may launch at H-hour."
+            f"ISR timing: Caribbean ISR West/Orbit has no TimeOnTargetStation — drone may launch at H-hour."
         )
 
     if sead_sched_any or re.search(

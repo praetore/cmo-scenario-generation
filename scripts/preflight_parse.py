@@ -1991,13 +1991,14 @@ def _parse_isr_on_station_schedule(content):
     if not (date and isr_station_m):
         return {}
     if not re.search(
-        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR Orbit",
+        r"set_patrol_on_station_schedule\s*\([^)]*Caribbean ISR (West|Orbit)",
         content,
         re.IGNORECASE,
     ):
         return {}
     station = isr_station_m.group(1)
-    return {"Caribbean ISR Orbit": {"time_on_target": f"{date} {station}"}}
+    mission = "Caribbean ISR West" if "Caribbean ISR West" in content else "Caribbean ISR Orbit"
+    return {mission: {"time_on_target": f"{date} {station}"}}
 
 def _parse_bootstrap_naval_schedule(content):
     """TLAM schedule via setup_csg_strike_on_air_strike + set_naval_strike_schedule."""

@@ -95,7 +95,7 @@ CMO’s script console and event Lua run **Lua 5.3** (not 5.1, not 5.4). Write b
 | `table.unpack(t)` | global `unpack(t)` |
 | Integer `//` when you need floor division | assuming `/` truncates toward zero for integers |
 
-- **Preflight / luacheck:** Repo root **`.luacheckrc`** sets `lua_version = "5.3"` and `std = "lua53"`. `validate_scenario.py` runs luacheck with that config — agents must not assume desktop Lua 5.1/5.4 rules.
+- **Preflight / luacheck:** Repo root **`.luacheckrc`** sets `lua_version = "5.3"` and `std = "lua53"`. `validate_scenario.py` / `generate_scenario.py` run luacheck on the scenario `*_src.lua` **and** on **materialized Play-time event scripts** from `scripts/scenario_bootstrap.lua` (`M.build_*_script` → `ScriptText`). Luacheck does **not** parse Lua inside string literals in the source file itself — the materializer catches syntax errors like `break` outside a loop in event actions. Agents must not assume desktop Lua 5.1/5.4 rules.
 - **API surface:** CMO adds globals (`ScenEdit_*`, `VP_*`, `World_*`, `Tool_*`); luacheck ignores those via `.luacheckrc`. Scenario/bootstrap code may use `cmo` global only when bootstrap is inlined.
 - **Reference:** [Command Lua Docs](https://commandlua.github.io/) for game API; [Lua 5.3 manual](https://www.lua.org/manual/5.3/) for language semantics.
 
