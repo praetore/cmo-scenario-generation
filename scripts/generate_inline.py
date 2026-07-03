@@ -61,6 +61,8 @@ def bootstrap_lua_for_inline(series="DB3K", version="515"):
 def _top_level_kind(line: str) -> str | None:
     if re.match(r"^function M\.", line):
         return "function"
+    if re.match(r"^M\.state\s*=", line):
+        return "state_init"
     if CONST_M.match(line):
         return "const"
     if ALIAS_M.match(line):
@@ -210,6 +212,20 @@ def _parse_bootstrap_segments(bootstrap_block: str) -> tuple[str, str, list[dict
             i = j
             continue
 
+        if kind == "state_init":
+            j = i + 1
+            while j < len(lines) and _top_level_kind(lines[j]) is None:
+                j += 1
+            segments.append(
+                {
+                    "type": "state_init",
+                    "leading": take_comments(),
+                    "text": "".join(lines[i:j]),
+                }
+            )
+            i = j
+            continue
+
         if kind == "const":
             name_m = CONST_M.match(line)
             j = i + 1
@@ -282,7 +298,9 @@ def tree_shake_bootstrap(merged_text: str) -> tuple[str, dict]:
     if marker:
         parts.insert(0, marker)
     for seg in segments:
-        if seg["type"] == "function":
+        if seg["type"] == "state_init":
+            parts.append(seg.get("leading", "") + seg["text"])
+        elif seg["type"] == "function":
             if seg["name"] in needed_functions:
                 parts.append(seg.get("leading", "") + seg["text"])
         elif seg["type"] == "const":
