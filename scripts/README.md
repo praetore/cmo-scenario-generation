@@ -41,11 +41,27 @@ All generated scenario material under `generated/` — headers, briefings, and p
 | Module | Role |
 |--------|------|
 | `preflight_validate.py` | Orchestrates full scenario validation |
-| `preflight_parse.py` | Parse scenario Lua for units, missions, sides |
-| `preflight_checks.py` | Individual validation checks |
+| `preflight_parse.py` | Re-exports split Lua parsers (barrel) |
+| `preflight_parse_io.py` | Load scenario + bootstrap text |
+| `preflight_parse_math.py` | Distance, time, bbox helpers |
+| `preflight_parse_lua.py` | Lua expression / annotation parsing |
+| `preflight_parse_db.py` | DB lookup helpers for parsing |
+| `preflight_parse_geo.py` | Ship, sub, facility placement |
+| `preflight_parse_units.py` | Air wings, CSG groups, assignments |
+| `preflight_parse_missions.py` | Missions, schedules, strike packages |
+| `preflight_parse_sides.py` | Sides and reference points |
+| `preflight_checks.py` | Re-exports split validators (barrel) |
+| `preflight_checks_csg.py` | CSG formation, patrol zones, TLAM |
+| `preflight_checks_strike.py` | Strike timing, escorts, naval strike |
+| `preflight_checks_sead.py` | SEAD design, ISR-before-SEAD |
+| `preflight_checks_oob.py` | Operator, nationality, era, nuclear |
+| `preflight_checks_geo.py` | Geo placement, civilian paths |
+| `preflight_checks_air.py` | Air assignments, host capacity, sides |
 | `preflight_constants.py` | Shared constants |
 | `preflight_report.py` | Error/warning report helpers |
 | `preflight_luacheck.py` | Download/run luacheck for static Lua analysis (config: repo `.luacheckrc`, Lua 5.3) |
+
+`preflight_validate.py` imports validators and parsers explicitly. The `preflight_checks.py` / `preflight_parse.py` barrels remain for backward compatibility.
 
 ### Generate (`generate_*`)
 
@@ -73,6 +89,8 @@ Set a FlightAware AeroAPI key in `cmo_config.ini` under `[aeroapi] api_key` or `
 Full reference: `.cursor/rules/aeroapi_reference.md`.
 
 ```bash
-python scripts/traffic_aeroapi.py flights --origin EHAM
-python scripts/traffic_flights_to_cmo.py --origin EHAM --limit 20
+python scripts/traffic_aeroapi.py key-status
+python scripts/traffic_aeroapi.py count --query "-latlong \"50.7 3.3 53.6 7.3\""
+python scripts/traffic_flights_to_cmo.py --name nl_traffic --box "50.7 3.3 53.6 7.3" --max-flights 40
+python scripts/traffic_flights_to_cmo.py --name nl_traffic --from-json sample.json
 ```

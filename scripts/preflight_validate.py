@@ -11,9 +11,64 @@ from cmo_config import format_config_setup_hint, resolve_db_dir
 from preflight_bootstrap_event_scripts import validate_bootstrap_event_scripts
 from preflight_luacheck import install_luacheck_local, luacheck_exe_path, REPO_ROOT
 from cmo_db import format_database_layout_message, open_db, resolve_source_db
-from preflight_checks import *
-from preflight_constants import *
-from preflight_parse import *
+from preflight_checks_air import (
+    _validate_air_host_capacity,
+    _validate_f35_carrier_assignments,
+    _validate_sides_created_before_use,
+    _validate_unit_mission_assignments,
+    _validate_wrapper_colon_syntax,
+)
+from preflight_checks_csg import (
+    _validate_carrier_strike_groups,
+    _validate_patrol_zone_proximity,
+)
+from preflight_checks_geo import (
+    _validate_civilian_flight_paths,
+    _validate_reference_points,
+    _validate_unit_geo_placement,
+)
+from preflight_checks_oob import (
+    _validate_declared_nationality,
+    _validate_era_appropriate_oob,
+    _validate_modern_strike_munitions,
+    _validate_no_nuclear_weapons,
+    _validate_operator_country_oob,
+)
+from preflight_checks_sead import (
+    _validate_isr_before_sead,
+    _validate_sead_mission_design,
+)
+from preflight_checks_strike import (
+    _validate_aar_for_bomber_strikes,
+    _validate_bomber_and_sead_escort_packages,
+    _validate_early_patrol_support_launches,
+    _validate_naval_strike_assignment,
+    _validate_naval_strike_launch_timing,
+    _validate_refuel_doctrine_sanity,
+    _validate_scenario_date_consistency,
+    _validate_sead_strike_launch_timing,
+    _validate_strike_escort_coverage,
+    _validate_strike_flight_package_grouping,
+    _validate_strike_flight_profile_and_timing,
+    _validate_strike_mission_escort_assignments,
+    _validate_strike_tot_reachability,
+    _validate_strike_tot_synchronization,
+)
+from preflight_parse import (
+    _extract_air_assignments,
+    _infer_mission_role,
+    _is_aircraft_loadout_compatible,
+    _loadout_roles,
+    _mission_loadout_fit,
+    _parse_all_geo_placements,
+    _parse_mission_zone_map,
+    _parse_naval_placements,
+    _parse_scenario_missions,
+    _parse_scenario_year,
+    _parse_ship_strike_assignments,
+    _pick_series_version,
+    load_scenario_lua_content,
+)
 
 _LUACHECK_TOOLS_EXE = luacheck_exe_path()
 
