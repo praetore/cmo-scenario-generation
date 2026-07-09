@@ -53,7 +53,7 @@ cmo_install_dir = C:/Program Files (x86)/Steam/steamapps/common/Command Modern O
 
 ## Generate and run a scenario
 
-Do this in **Cursor Agent** (chat with Agent mode enabled). The repo’s `.cursor/rules/` files tell the agent how to write valid CMO Lua.
+Do this in **Cursor Agent** (chat with Agent mode enabled). The repo’s **`AGENTS.md`** (root) and **`.cursor/rules/`** reference docs tell the agent how to write valid CMO Lua.
 
 ### 1. Ask Cursor to generate a scenario
 

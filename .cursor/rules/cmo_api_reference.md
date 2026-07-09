@@ -311,7 +311,7 @@ This function assign a unit to a mission. The 'UnitX' can be used as the unitnam
 
 Same applies when setting **`unit.mission`** or **`ScenEdit_SetUnit({ mission = … })`** — that path calls `AssignUnitToMission` internally; use the mission **name**, not its guid.
 
-`ScenEdit_SetMission` / `ScenEdit_GetMission` online docs describe the second argument as mission **name** only; local generated API text also allows guid — prefer **side + name** in scenario scripts. See `skills_cmo.md` §6 (init log) and `scripts/scenario_bootstrap.lua` (`assign_air_to_mission`, `assign_ship_to_mission`).
+`ScenEdit_SetMission` / `ScenEdit_GetMission` online docs describe the second argument as mission **name** only; local generated API text also allows guid — prefer **side + name** in scenario scripts. See `AGENTS.md` §6 (init log) and `scripts/scenario_bootstrap.lua` (`assign_air_to_mission`, `assign_ship_to_mission`).
 
 ---
 
@@ -1204,7 +1204,7 @@ This function Sets the properties of an existing unit
 - **latitude =** (`latitude`): The latitude of the new reference point
 - **longitude =** (`longitude`): The longitude of the new reference point
 
-**Practical note (airborne at scenario start):** Setting `latitude`/`longitude`/`altitude` on aircraft that were spawned **with** `base=` does not reliably place them in flight — they stay on the carrier/ramp. For ISR/AEW already on-orbit at H-hour: spawn the first sortie with `ScenEdit_AddUnit` **without** `base` at orbit coordinates, or use `launch=true` (often via a Play-time event) together with position/throttle. See `skills_cmo.md` §2 and `scenario_bootstrap_reference.md` recipe *Support already on-orbit at scenario start*.
+**Practical note (airborne at scenario start):** Setting `latitude`/`longitude`/`altitude` on aircraft that were spawned **with** `base=` does not reliably place them in flight — they stay on the carrier/ramp. For ISR/AEW already on-orbit at H-hour: spawn the first sortie with `ScenEdit_AddUnit` **without** `base` at orbit coordinates, or use `launch=true` (often via a Play-time event) together with position/throttle. See `AGENTS.md` §2 and `scenario_bootstrap_reference.md` recipe *Support already on-orbit at scenario start*.
 
 ---
 

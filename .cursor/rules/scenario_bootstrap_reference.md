@@ -5,7 +5,7 @@ Implementation: **`scripts/scenario_bootstrap.lua`**. Scenarios call helpers as 
 **Authoring workflow**
 
 1. Write **`generated/src/<scenario>_src.lua`** using `cmo.*` (see setup below).
-2. Player briefing (English, sidecar only — **not** inline in Lua): **`generated/src/<scenario>_briefing.txt`** (+ auto-synced `.html`). See **`skills_cmo.md` §10**.
+2. Player briefing (English, sidecar only — **not** inline in Lua): **`generated/src/<scenario>_briefing.txt`** (+ auto-synced `.html`). See **`AGENTS.md` §10**.
 3. Preflight: `python scripts/validate_scenario.py generated/src/<scenario>_src.lua ...`
 4. **Build CMO file (mandatory after every src edit):** `python scripts/generate_scenario.py generated/src/<scenario>_src.lua` → **`generated/<scenario>.lua`**. The agent runs this — do not leave it to the user. Source changes are invisible in CMO until this step succeeds.
 5. Load **`generated/<scenario>.lua`** in CMO (never load `*_src.lua`).
@@ -42,7 +42,7 @@ Special Instructions: ...
 - **Standalone load file:** `python scripts/generate_scenario.py generated/<name>.lua` (briefing inject only).
 - Skip briefings: `--no-briefing`
 
-See also: **`skills_cmo.md` §6 (logs), §10 (briefings)**, **`logic_checks_cmo.md` §4**.
+See also: **`AGENTS.md` §6 (logs), §10 (briefings)**, **`logic_checks_cmo.md` §4**.
 
 ---
 
@@ -218,7 +218,7 @@ Reference implementation: `generated/src/cuba_pressure_2026_demo_src.lua`.
 
 ---
 
-## Init log prefixes (`skills_cmo.md` §6)
+## Init log prefixes (`AGENTS.md` §6)
 
 | Prefix | Meaning |
 | :--- | :--- |

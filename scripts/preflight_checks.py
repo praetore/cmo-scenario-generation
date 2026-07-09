@@ -1460,7 +1460,7 @@ def _validate_no_nuclear_weapons(content, unique_pairs, ships, db, series, versi
 
 def _validate_operator_country_oob(content, assignments, naval_units, db, series, version):
     """
-    OperatorCountry vs Lua side (skills_cmo nationaliteit). Catches Soviet hulls on Cuba side, etc.
+    OperatorCountry vs Lua side (AGENTS.md nationality). Catches Soviet hulls on Cuba side, etc.
     """
     errors = []
     warnings = []

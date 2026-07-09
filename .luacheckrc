@@ -1,5 +1,5 @@
 -- Luacheck config for CMO scenario Lua (preflight + agents).
--- CMO runtime is Lua 5.3 — keep lua_version in sync with skills_cmo.md §2.
+-- CMO runtime is Lua 5.3 — keep lua_version in sync with AGENTS.md §2.
 std = "lua53"
 lua_version = "5.3"
 
